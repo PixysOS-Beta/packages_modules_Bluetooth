@@ -23,6 +23,8 @@
 
 #include "common/init_flags.h"
 #include "hci/hci_layer.h"
+#include "hci_controller_generated.h"
+#include "os/metrics.h"
 
 namespace bluetooth {
 namespace hci {
@@ -78,7 +80,7 @@ struct Controller::impl {
     }
 
     hci_->EnqueueCommand(
-        LeReadConnectListSizeBuilder::Create(),
+        LeReadFilterAcceptListSizeBuilder::Create(),
         handler->BindOnceOn(this, &Controller::impl::le_read_connect_list_size_handler));
 
     if (is_supported(OpCode::LE_READ_RESOLVING_LIST_SIZE) && module_.SupportsBlePrivacy()) {
@@ -146,7 +148,7 @@ struct Controller::impl {
       LOG_INFO("LE_READ_PERIODIC_ADVERTISING_LIST_SIZE not supported, defaulting to 0");
       le_periodic_advertiser_list_size_ = 0;
     }
-    if (is_supported(OpCode::LE_SET_HOST_FEATURE)) {
+    if (is_supported(OpCode::LE_SET_HOST_FEATURE) && module_.SupportsBleConnectedIsochronousStreamCentral()) {
       hci_->EnqueueCommand(
           LeSetHostFeatureBuilder::Create(LeHostFeatureBits::CONNECTED_ISO_STREAM_HOST_SUPPORT, Enable::ENABLED),
           handler->BindOnceOn(this, &Controller::impl::le_set_host_feature_handler));
@@ -244,6 +246,12 @@ struct Controller::impl {
     ASSERT_LOG(status == ErrorCode::SUCCESS, "Status 0x%02hhx, %s", status, ErrorCodeText(status).c_str());
 
     local_version_information_ = complete_view.GetLocalVersionInformation();
+    bluetooth::os::LogMetricBluetoothLocalVersions(
+        local_version_information_.manufacturer_name_,
+        static_cast<uint8_t>(local_version_information_.lmp_version_),
+        local_version_information_.lmp_subversion_,
+        static_cast<uint8_t>(local_version_information_.hci_version_),
+        local_version_information_.hci_revision_);
   }
 
   void read_local_supported_commands_complete_handler(CommandCompleteView view) {
@@ -260,11 +268,10 @@ struct Controller::impl {
     ErrorCode status = complete_view.GetStatus();
     ASSERT_LOG(status == ErrorCode::SUCCESS, "Status 0x%02hhx, %s", status, ErrorCodeText(status).c_str());
     uint8_t page_number = complete_view.GetPageNumber();
-    maximum_page_number_ = complete_view.GetMaximumPageNumber();
     extended_lmp_features_array_.push_back(complete_view.GetExtendedLmpFeatures());
-
+    bluetooth::os::LogMetricBluetoothLocalSupportedFeatures(page_number, complete_view.GetExtendedLmpFeatures());
     // Query all extended features
-    if (page_number < maximum_page_number_) {
+    if (page_number < complete_view.GetMaximumPageNumber()) {
       page_number++;
       hci_->EnqueueCommand(
           ReadLocalExtendedFeaturesBuilder::Create(page_number),
@@ -353,11 +360,11 @@ struct Controller::impl {
   }
 
   void le_read_connect_list_size_handler(CommandCompleteView view) {
-    auto complete_view = LeReadConnectListSizeCompleteView::Create(view);
+    auto complete_view = LeReadFilterAcceptListSizeCompleteView::Create(view);
     ASSERT(complete_view.IsValid());
     ErrorCode status = complete_view.GetStatus();
     ASSERT_LOG(status == ErrorCode::SUCCESS, "Status 0x%02hhx, %s", status, ErrorCodeText(status).c_str());
-    le_connect_list_size_ = complete_view.GetConnectListSize();
+    le_connect_list_size_ = complete_view.GetFilterAcceptListSize();
   }
 
   void le_read_resolving_list_size_handler(CommandCompleteView view) {
@@ -564,6 +571,9 @@ struct Controller::impl {
     return supported;                                                          \
   }
 
+  void Dump(
+      std::promise<flatbuffers::Offset<ControllerData>> promise, flatbuffers::FlatBufferBuilder* fb_builder) const;
+
   bool is_supported(OpCode op_code) {
     switch (op_code) {
       OP_CODE_MAPPING(INQUIRY)
@@ -710,10 +720,10 @@ struct Controller::impl {
       OP_CODE_MAPPING(LE_SET_SCAN_ENABLE)
       OP_CODE_MAPPING(LE_CREATE_CONNECTION)
       OP_CODE_MAPPING(LE_CREATE_CONNECTION_CANCEL)
-      OP_CODE_MAPPING(LE_READ_CONNECT_LIST_SIZE)
-      OP_CODE_MAPPING(LE_CLEAR_CONNECT_LIST)
-      OP_CODE_MAPPING(LE_ADD_DEVICE_TO_CONNECT_LIST)
-      OP_CODE_MAPPING(LE_REMOVE_DEVICE_FROM_CONNECT_LIST)
+      OP_CODE_MAPPING(LE_READ_FILTER_ACCEPT_LIST_SIZE)
+      OP_CODE_MAPPING(LE_CLEAR_FILTER_ACCEPT_LIST)
+      OP_CODE_MAPPING(LE_ADD_DEVICE_TO_FILTER_ACCEPT_LIST)
+      OP_CODE_MAPPING(LE_REMOVE_DEVICE_FROM_FILTER_ACCEPT_LIST)
       OP_CODE_MAPPING(LE_CONNECTION_UPDATE)
       OP_CODE_MAPPING(LE_SET_HOST_CHANNEL_CLASSIFICATION)
       OP_CODE_MAPPING(LE_READ_CHANNEL_MAP)
@@ -755,10 +765,10 @@ struct Controller::impl {
       OP_CODE_MAPPING(LE_SET_PHY)
       OP_CODE_MAPPING(LE_ENHANCED_RECEIVER_TEST)
       OP_CODE_MAPPING(LE_ENHANCED_TRANSMITTER_TEST)
-      OP_CODE_MAPPING(LE_SET_EXTENDED_ADVERTISING_RANDOM_ADDRESS)
+      OP_CODE_MAPPING(LE_SET_ADVERTISING_SET_RANDOM_ADDRESS)
       OP_CODE_MAPPING(LE_SET_EXTENDED_ADVERTISING_PARAMETERS)
       OP_CODE_MAPPING(LE_SET_EXTENDED_ADVERTISING_DATA)
-      OP_CODE_MAPPING(LE_SET_EXTENDED_ADVERTISING_SCAN_RESPONSE)
+      OP_CODE_MAPPING(LE_SET_EXTENDED_SCAN_RESPONSE_DATA)
       OP_CODE_MAPPING(LE_SET_EXTENDED_ADVERTISING_ENABLE)
       OP_CODE_MAPPING(LE_READ_MAXIMUM_ADVERTISING_DATA_LENGTH)
       OP_CODE_MAPPING(LE_READ_NUMBER_OF_SUPPORTED_ADVERTISING_SETS)
@@ -816,6 +826,10 @@ struct Controller::impl {
       OP_CODE_MAPPING(READ_LOCAL_SUPPORTED_CONTROLLER_DELAY)
       OP_CODE_MAPPING(CONFIGURE_DATA_PATH)
       OP_CODE_MAPPING(ENHANCED_FLUSH)
+      OP_CODE_MAPPING(LE_SET_DATA_RELATED_ADDRESS_CHANGES)
+      OP_CODE_MAPPING(LE_SET_DEFAULT_SUBRATE)
+      OP_CODE_MAPPING(LE_SUBRATE_REQUEST)
+      OP_CODE_MAPPING(SET_MIN_ENCRYPTION_KEY_SIZE)
 
       // deprecated
       case OpCode::ADD_SCO_CONNECTION:
@@ -858,7 +872,6 @@ struct Controller::impl {
   CompletedAclPacketsCallback acl_monitor_credits_callback_{};
   LocalVersionInformation local_version_information_;
   std::array<uint8_t, 64> local_supported_commands_;
-  uint8_t maximum_page_number_;
   std::vector<uint64_t> extended_lmp_features_array_;
   uint16_t acl_buffer_length_ = 0;
   uint16_t acl_buffers_ = 0;
@@ -988,7 +1001,7 @@ LOCAL_LE_FEATURE_ACCESSOR(SupportsBlePowerChangeIndication, 34)
 LOCAL_LE_FEATURE_ACCESSOR(SupportsBlePathLossMonitoring, 35)
 
 uint64_t Controller::GetLocalFeatures(uint8_t page_number) const {
-  if (page_number <= impl_->maximum_page_number_) {
+  if (page_number < impl_->extended_lmp_features_array_.size()) {
     return impl_->extended_lmp_features_array_[page_number];
   }
   return 0x00;
@@ -1108,7 +1121,7 @@ uint64_t Controller::GetLeSupportedStates() const {
   return impl_->le_supported_states_;
 }
 
-uint8_t Controller::GetLeConnectListSize() const {
+uint8_t Controller::GetLeFilterAcceptListSize() const {
   return impl_->le_connect_list_size_;
 }
 
@@ -1161,5 +1174,104 @@ void Controller::Stop() {
 std::string Controller::ToString() const {
   return "Controller";
 }
+
+void Controller::impl::Dump(
+    std::promise<flatbuffers::Offset<ControllerData>> promise, flatbuffers::FlatBufferBuilder* fb_builder) const {
+  ASSERT(fb_builder != nullptr);
+  auto title = fb_builder->CreateString("----- Hci Controller Dumpsys -----");
+
+  auto local_version_information_data = CreateLocalVersionInformationData(
+      *fb_builder,
+      fb_builder->CreateString(HciVersionText(local_version_information_.hci_version_)),
+      local_version_information_.hci_revision_,
+      fb_builder->CreateString(LmpVersionText(local_version_information_.lmp_version_)),
+      local_version_information_.manufacturer_name_,
+      local_version_information_.lmp_subversion_);
+
+  auto acl_buffer_size_data = BufferSizeData(acl_buffer_length_, acl_buffers_);
+
+  auto sco_buffer_size_data = BufferSizeData(sco_buffer_length_, sco_buffers_);
+
+  auto le_buffer_size_data =
+      BufferSizeData(le_buffer_size_.le_data_packet_length_, le_buffer_size_.total_num_le_packets_);
+
+  auto iso_buffer_size_data =
+      BufferSizeData(iso_buffer_size_.le_data_packet_length_, iso_buffer_size_.total_num_le_packets_);
+
+  auto le_maximum_data_length_data = LeMaximumDataLengthData(
+      le_maximum_data_length_.supported_max_tx_octets_,
+      le_maximum_data_length_.supported_max_tx_time_,
+      le_maximum_data_length_.supported_max_rx_octets_,
+      le_maximum_data_length_.supported_max_rx_time_);
+
+  std::vector<LocalSupportedCommandsData> local_supported_commands_vector;
+  for (uint8_t index = 0; index < local_supported_commands_.size(); index++) {
+    local_supported_commands_vector.push_back(LocalSupportedCommandsData(index, local_supported_commands_[index]));
+  }
+  auto local_supported_commands_data = fb_builder->CreateVectorOfStructs(local_supported_commands_vector);
+
+  auto vendor_capabilities_data = VendorCapabilitiesData(
+      vendor_capabilities_.is_supported_,
+      vendor_capabilities_.max_advt_instances_,
+      vendor_capabilities_.offloaded_resolution_of_private_address_,
+      vendor_capabilities_.total_scan_results_storage_,
+      vendor_capabilities_.max_irk_list_sz_,
+      vendor_capabilities_.filtering_support_,
+      vendor_capabilities_.max_filter_,
+      vendor_capabilities_.activity_energy_info_support_,
+      vendor_capabilities_.version_supported_,
+      vendor_capabilities_.total_num_of_advt_tracked_,
+      vendor_capabilities_.extended_scan_support_,
+      vendor_capabilities_.debug_logging_supported_,
+      vendor_capabilities_.le_address_generation_offloading_support_,
+      vendor_capabilities_.a2dp_source_offload_capability_mask_,
+      vendor_capabilities_.bluetooth_quality_report_support_);
+
+  auto extended_lmp_features_vector = fb_builder->CreateVector(extended_lmp_features_array_);
+
+  // Create the root table
+  ControllerDataBuilder builder(*fb_builder);
+
+  builder.add_title(title);
+  builder.add_local_version_information(local_version_information_data);
+
+  builder.add_acl_buffer_size(&acl_buffer_size_data);
+  builder.add_sco_buffer_size(&sco_buffer_size_data);
+  builder.add_iso_buffer_size(&iso_buffer_size_data);
+  builder.add_le_buffer_size(&le_buffer_size_data);
+
+  builder.add_le_connect_list_size(le_connect_list_size_);
+  builder.add_le_resolving_list_size(le_resolving_list_size_);
+
+  builder.add_le_maximum_data_length(&le_maximum_data_length_data);
+  builder.add_le_maximum_advertising_data_length(le_maximum_advertising_data_length_);
+  builder.add_le_suggested_default_data_length(le_suggested_default_data_length_);
+  builder.add_le_number_supported_advertising_sets(le_number_supported_advertising_sets_);
+  builder.add_le_periodic_advertiser_list_size(le_periodic_advertiser_list_size_);
+
+  builder.add_local_supported_commands(local_supported_commands_data);
+  builder.add_extended_lmp_features_array(extended_lmp_features_vector);
+  builder.add_le_local_supported_features(le_local_supported_features_);
+  builder.add_le_supported_states(le_supported_states_);
+  builder.add_vendor_capabilities(&vendor_capabilities_data);
+
+  flatbuffers::Offset<ControllerData> dumpsys_data = builder.Finish();
+  promise.set_value(dumpsys_data);
+}
+
+DumpsysDataFinisher Controller::GetDumpsysData(flatbuffers::FlatBufferBuilder* fb_builder) const {
+  ASSERT(fb_builder != nullptr);
+
+  std::promise<flatbuffers::Offset<ControllerData>> promise;
+  auto future = promise.get_future();
+  impl_->Dump(std::move(promise), fb_builder);
+
+  auto dumpsys_data = future.get();
+
+  return [dumpsys_data](DumpsysDataBuilder* dumpsys_builder) {
+    dumpsys_builder->add_hci_controller_dumpsys_data(dumpsys_data);
+  };
+}
+
 }  // namespace hci
 }  // namespace bluetooth

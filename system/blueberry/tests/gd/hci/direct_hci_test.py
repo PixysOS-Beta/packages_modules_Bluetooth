@@ -39,17 +39,17 @@ from bluetooth_packets_python3.hci_packets import OwnAddressType
 from bluetooth_packets_python3.hci_packets import LeScanningFilterPolicy
 from bluetooth_packets_python3.hci_packets import Enable
 from bluetooth_packets_python3.hci_packets import FilterDuplicates
-from bluetooth_packets_python3.hci_packets import LeSetExtendedAdvertisingLegacyParametersBuilder
-from bluetooth_packets_python3.hci_packets import LegacyAdvertisingProperties
+from bluetooth_packets_python3.hci_packets import LeSetExtendedAdvertisingParametersLegacyBuilder
+from bluetooth_packets_python3.hci_packets import LegacyAdvertisingEventProperties
 from bluetooth_packets_python3.hci_packets import PeerAddressType
 from bluetooth_packets_python3.hci_packets import AdvertisingFilterPolicy
-from bluetooth_packets_python3.hci_packets import LeSetExtendedAdvertisingRandomAddressBuilder
+from bluetooth_packets_python3.hci_packets import LeSetAdvertisingSetRandomAddressBuilder
 from bluetooth_packets_python3.hci_packets import GapData
 from bluetooth_packets_python3.hci_packets import GapDataType
 from bluetooth_packets_python3.hci_packets import LeSetExtendedAdvertisingDataBuilder
 from bluetooth_packets_python3.hci_packets import Operation
 from bluetooth_packets_python3.hci_packets import FragmentPreference
-from bluetooth_packets_python3.hci_packets import LeSetExtendedAdvertisingScanResponseBuilder
+from bluetooth_packets_python3.hci_packets import LeSetExtendedScanResponseDataBuilder
 from bluetooth_packets_python3.hci_packets import LeSetExtendedAdvertisingEnableBuilder
 from bluetooth_packets_python3.hci_packets import LeSetExtendedScanEnableBuilder
 from bluetooth_packets_python3.hci_packets import EnabledSet
@@ -58,8 +58,8 @@ from bluetooth_packets_python3.hci_packets import LeExtendedCreateConnectionBuil
 from bluetooth_packets_python3.hci_packets import InitiatorFilterPolicy
 from bluetooth_packets_python3.hci_packets import AddressType
 from bluetooth_packets_python3.hci_packets import BroadcastFlag
-from bluetooth_packets_python3.hci_packets import ConnectListAddressType
-from bluetooth_packets_python3.hci_packets import LeAddDeviceToConnectListBuilder
+from bluetooth_packets_python3.hci_packets import FilterAcceptListAddressType
+from bluetooth_packets_python3.hci_packets import LeAddDeviceToFilterAcceptListBuilder
 from bluetooth_packets_python3.hci_packets import LeSetRandomAddressBuilder
 from bluetooth_packets_python3.hci_packets import LeReadRemoteFeaturesBuilder
 from bluetooth_packets_python3.hci_packets import WritePageTimeoutBuilder
@@ -135,9 +135,9 @@ class DirectHciTest(gd_base_test.GdBaseTestClass):
         # CERT Advertises
         advertising_handle = 0
         self.cert_hal.send_hci_command(
-            LeSetExtendedAdvertisingLegacyParametersBuilder(
+            LeSetExtendedAdvertisingParametersLegacyBuilder(
                 advertising_handle,
-                LegacyAdvertisingProperties.ADV_IND,
+                LegacyAdvertisingEventProperties.ADV_IND,
                 512,
                 768,
                 7,
@@ -150,8 +150,7 @@ class DirectHciTest(gd_base_test.GdBaseTestClass):
                 Enable.DISABLED  # Scan request notification
             ))
 
-        self.cert_hal.send_hci_command(
-            LeSetExtendedAdvertisingRandomAddressBuilder(advertising_handle, '0C:05:04:03:02:01'))
+        self.cert_hal.send_hci_command(LeSetAdvertisingSetRandomAddressBuilder(advertising_handle, '0C:05:04:03:02:01'))
         gap_name = GapData()
         gap_name.data_type = GapDataType.COMPLETE_LOCAL_NAME
         gap_name.data = list(bytes(b'Im_A_Cert'))
@@ -165,8 +164,8 @@ class DirectHciTest(gd_base_test.GdBaseTestClass):
         gap_short_name.data = list(bytes(b'Im_A_C'))
 
         self.cert_hal.send_hci_command(
-            LeSetExtendedAdvertisingScanResponseBuilder(advertising_handle, Operation.COMPLETE_ADVERTISEMENT,
-                                                        FragmentPreference.CONTROLLER_SHOULD_NOT, [gap_short_name]))
+            LeSetExtendedScanResponseDataBuilder(advertising_handle, Operation.COMPLETE_ADVERTISEMENT,
+                                                 FragmentPreference.CONTROLLER_SHOULD_NOT, [gap_short_name]))
 
         enabled_set = EnabledSet()
         enabled_set.advertising_handle = 0
@@ -205,7 +204,6 @@ class DirectHciTest(gd_base_test.GdBaseTestClass):
 
     def test_le_connection_dut_advertises(self):
         self.dut_hci.register_for_le_events(SubeventCode.CONNECTION_COMPLETE, SubeventCode.ADVERTISING_SET_TERMINATED,
-                                            SubeventCode.ENHANCED_CONNECTION_COMPLETE,
                                             SubeventCode.READ_REMOTE_FEATURES_COMPLETE)
         # Cert Connects
         self.cert_hal.unmask_event(EventCode.LE_META_EVENT)
@@ -238,14 +236,14 @@ class DirectHciTest(gd_base_test.GdBaseTestClass):
         assertThat(self.dut_hci.get_raw_acl_stream()).emits(
             lambda packet: logging.debug(packet.payload) or b'SomeMoreAclData' in packet.payload)
 
-    def test_le_connect_list_connection_cert_advertises(self):
-        self.dut_hci.register_for_le_events(SubeventCode.CONNECTION_COMPLETE, SubeventCode.ENHANCED_CONNECTION_COMPLETE)
+    def test_le_filter_accept_list_connection_cert_advertises(self):
         # DUT Connects
         self.dut_hci.send_command(LeSetRandomAddressBuilder('0D:05:04:03:02:01'))
-        self.dut_hci.send_command(LeAddDeviceToConnectListBuilder(ConnectListAddressType.RANDOM, '0C:05:04:03:02:01'))
+        self.dut_hci.send_command(
+            LeAddDeviceToFilterAcceptListBuilder(FilterAcceptListAddressType.RANDOM, '0C:05:04:03:02:01'))
         phy_scan_params = self._create_phy_scan_params()
         self.dut_hci.send_command(
-            LeExtendedCreateConnectionBuilder(InitiatorFilterPolicy.USE_CONNECT_LIST,
+            LeExtendedCreateConnectionBuilder(InitiatorFilterPolicy.USE_FILTER_ACCEPT_LIST,
                                               OwnAddressType.RANDOM_DEVICE_ADDRESS, AddressType.RANDOM_DEVICE_ADDRESS,
                                               'BA:D5:A4:A3:A2:A1', 1, [phy_scan_params]))
 

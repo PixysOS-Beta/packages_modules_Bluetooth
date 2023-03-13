@@ -21,7 +21,6 @@ import static org.mockito.Mockito.doReturn;
 import android.bluetooth.BluetoothAdapter;
 import android.content.Context;
 
-import androidx.test.InstrumentationRegistry;
 import androidx.test.filters.MediumTest;
 import androidx.test.rule.ServiceTestRule;
 import androidx.test.runner.AndroidJUnit4;
@@ -45,17 +44,17 @@ import org.mockito.MockitoAnnotations;
 public class BluetoothOppServiceTest {
     private BluetoothOppService mService = null;
     private BluetoothAdapter mAdapter = null;
-    private Context mTargetContext;
 
-    @Rule public final ServiceTestRule mServiceRule = new ServiceTestRule();
+    @Rule
+    public final ServiceTestRule mServiceRule = new ServiceTestRule();
 
-    @Mock private AdapterService mAdapterService;
+    @Mock
+    private AdapterService mAdapterService;
 
     @Before
     public void setUp() throws Exception {
-        mTargetContext = InstrumentationRegistry.getTargetContext();
         Assume.assumeTrue("Ignore test when BluetoothOppService is not enabled",
-                mTargetContext.getResources().getBoolean(R.bool.profile_supported_opp));
+                BluetoothOppService.isEnabled());
         MockitoAnnotations.initMocks(this);
         TestUtils.setAdapterService(mAdapterService);
         doReturn(true, false).when(mAdapterService).isStartedProfile(anyString());
@@ -69,7 +68,7 @@ public class BluetoothOppServiceTest {
 
     @After
     public void tearDown() throws Exception {
-        if (!mTargetContext.getResources().getBoolean(R.bool.profile_supported_opp)) {
+        if (!BluetoothOppService.isEnabled()) {
             return;
         }
         TestUtils.stopService(mServiceRule, BluetoothOppService.class);

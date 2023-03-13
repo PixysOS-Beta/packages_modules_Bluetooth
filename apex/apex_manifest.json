@@ -1,4 +1,11 @@
 {
-  "name": "com.android.bluetooth",
-  "version": 2
+  "version": 339990000,
+  "provideNativeLibs": [
+  ],
+  "provideSharedApexLibs": false,
+  "requireSharedApexLibs": [
+  ],
+  "name": "com.android.btservices",
+  "requireNativeLibs": [
+  ]
 }

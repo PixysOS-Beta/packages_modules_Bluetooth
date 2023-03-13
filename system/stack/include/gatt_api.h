@@ -213,6 +213,8 @@ typedef enum : uint16_t {
 
   GATT_CONN_FAILED_ESTABLISHMENT = HCI_ERR_CONN_FAILED_ESTABLISHMENT,
 
+  GATT_CONN_TERMINATED_POWER_OFF = HCI_ERR_REMOTE_POWER_OFF,
+
   BTA_GATT_CONN_NONE = 0x0101, /* 0x0101 no connection to cancel  */
 
 } tGATT_DISCONN_REASON;
@@ -232,6 +234,7 @@ inline std::string gatt_disconnection_reason_text(
     CASE_RETURN_TEXT(GATT_CONN_LMP_TIMEOUT);
     CASE_RETURN_TEXT(GATT_CONN_FAILED_ESTABLISHMENT);
     CASE_RETURN_TEXT(BTA_GATT_CONN_NONE);
+    CASE_RETURN_TEXT(GATT_CONN_TERMINATED_POWER_OFF);
     default:
       return base::StringPrintf("UNKNOWN[%hu]", reason);
   }
@@ -247,7 +250,7 @@ inline std::string gatt_disconnection_reason_text(
 /* max legth of an attribute value
 */
 #ifndef GATT_MAX_ATTR_LEN
-#define GATT_MAX_ATTR_LEN 600
+#define GATT_MAX_ATTR_LEN 512
 #endif
 
 /* default GATT MTU size over LE link
@@ -518,6 +521,7 @@ enum {
   GATT_READ_BY_TYPE = 1,
   GATT_READ_BY_HANDLE,
   GATT_READ_MULTIPLE,
+  GATT_READ_MULTIPLE_VAR_LEN,
   GATT_READ_CHAR_VALUE,
   GATT_READ_PARTIAL,
   GATT_READ_MAX
@@ -998,13 +1002,18 @@ extern tGATT_STATUS GATTC_SendHandleValueConfirm(uint16_t conn_id,
  *
  * Parameter        bd_addr:   target device bd address.
  *                  idle_tout: timeout value in seconds.
- *                  transport: trasnport option.
+ *                  transport: transport option.
+ *                  is_active: whether we should use this as a signal that an
+ *                             active client now exists (which changes link
+ *                             timeout logic, see
+ *                             t_l2c_linkcb.with_active_local_clients for
+ *                             details).
  *
  * Returns          void
  *
  ******************************************************************************/
 extern void GATT_SetIdleTimeout(const RawAddress& bd_addr, uint16_t idle_tout,
-                                tBT_TRANSPORT transport);
+                                tBT_TRANSPORT transport, bool is_active);
 
 /*******************************************************************************
  *
@@ -1062,8 +1071,7 @@ extern void GATT_StartIf(tGATT_IF gatt_if);
  *
  * Parameters       gatt_if: applicaiton interface
  *                  bd_addr: peer device address.
- *                  is_direct: is a direct connection or a background auto
- *                             connection
+ *                  connection_type: connection type
  *                  transport : Physical transport for GATT connection
  *                              (BR/EDR or LE)
  *                  opportunistic: will not keep device connected if other apps
@@ -1074,11 +1082,12 @@ extern void GATT_StartIf(tGATT_IF gatt_if);
  *
  ******************************************************************************/
 extern bool GATT_Connect(tGATT_IF gatt_if, const RawAddress& bd_addr,
-                         bool is_direct, tBT_TRANSPORT transport,
-                         bool opportunistic);
+                         tBTM_BLE_CONN_TYPE connection_type,
+                         tBT_TRANSPORT transport, bool opportunistic);
 extern bool GATT_Connect(tGATT_IF gatt_if, const RawAddress& bd_addr,
-                         bool is_direct, tBT_TRANSPORT transport,
-                         bool opportunistic, uint8_t initiating_phys);
+                         tBTM_BLE_CONN_TYPE connection_type,
+                         tBT_TRANSPORT transport, bool opportunistic,
+                         uint8_t initiating_phys);
 
 /*******************************************************************************
  *

@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- *  Copyright 2021 Google, Inc.
+ *  Copyright 2022 Google LLC
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,17 +39,17 @@
  *   it can follow a temporary bandwidth increase or reduction.
  *
  * - Unlike classic codecs, the LC3 codecs does not run on fixed amount
- *   of samples as input. It operate only on fixed frame duration, for
- *   any supported samplerates (8 to 48 KHz). Two frame duration are
+ *   of samples as input. It operates only on fixed frame duration, for
+ *   any supported samplerates (8 to 48 KHz). Two frames duration are
  *   available 7.5ms and 10ms.
  *
  *
  * --- About 44.1 KHz samplerate ---
  *
- * The Bluetooth specification oddly add the 44.1 KHz samplerate. Although
- * there is NO SUPPORT in the core algorithm of the codec of 44.1 KHz.
+ * The Bluetooth specification reference the 44.1 KHz samplerate, although
+ * there is no support in the core algorithm of the codec of 44.1 KHz.
  * We can summarize the 44.1 KHz support by "you can put any samplerate
- * around the base defined samplerates". But be concerned by :
+ * around the defined base samplerates". Please mind the following items :
  *
  *   1. The frame size will not be 7.5 ms or 10 ms, but is scaled
  *      by 'supported samplerate' / 'input samplerate'
@@ -68,7 +68,7 @@
  *
  * --- How to encode / decode ---
  *
- * An encoder / decoder context need to be setup. This context keep states
+ * An encoder / decoder context needs to be setup. This context keeps states
  * on the current stream to proceed, and samples that overlapped across
  * frames.
  *
@@ -96,12 +96,17 @@
  *
  * Next, call the `lc3_encode()` encoding procedure, for each frames.
  * To handle multichannel streams (Stereo or more), you can proceed with
- * inerleaved channels PCM stream like this :
+ * interleaved channels PCM stream like this :
  *
  *   | for(int ich = 0; ich < nch: ich++)
  *   |     lc3_encode(encoder[ich], pcm + ich, nch, ...);
  *
  *   with `nch` as the number of channels in the PCM stream
+ *
+ * ---
+ *
+ * Antoine SOULIER, Tempow / Google LLC
+ *
  */
 
 #ifndef __LC3_H
@@ -145,6 +150,19 @@ extern "C" {
 
 
 /**
+ * PCM Sample Format
+ *   S16  Signed 16 bits, in 16 bits words (int16_t)
+ *   S24  Signed 24 bits, using low three bytes of 32 bits words (int32_t).
+ *        The high byte sign extends the sample value (bits 31..24 set to b23).
+ */
+
+enum lc3_pcm_format {
+    LC3_PCM_FORMAT_S16,
+    LC3_PCM_FORMAT_S24,
+};
+
+
+/**
  * Handle
  */
 
@@ -179,7 +197,7 @@ int lc3_frame_samples(int dt_us, int sr_hz);
 /**
  * Return the size of frames, from bitrate
  * dt_us           Frame duration in us, 7500 or 10000
- * bitrate         Target bitrate in bit per seconds
+ * bitrate         Target bitrate in bit per second
  * return          The floor size in bytes of the frames, -1 on bad parameters
  */
 int lc3_frame_bytes(int dt_us, int bitrate);
@@ -205,6 +223,9 @@ int lc3_delay_samples(int dt_us, int sr_hz);
  * dt_us           Frame duration in us, 7500 or 10000
  * sr_hz           Samplerate in Hz, 8000, 16000, 24000, 32000 or 48000
  * return          Size of then encoder in bytes, 0 on bad parameters
+ *
+ * The `sr_hz` parameter is the samplerate of the PCM input stream,
+ * and will match `sr_pcm_hz` of `lc3_setup_encoder()`.
  */
 unsigned lc3_encoder_size(int dt_us, int sr_hz);
 
@@ -212,27 +233,39 @@ unsigned lc3_encoder_size(int dt_us, int sr_hz);
  * Setup encoder
  * dt_us           Frame duration in us, 7500 or 10000
  * sr_hz           Samplerate in Hz, 8000, 16000, 24000, 32000 or 48000
+ * sr_pcm_hz       Input samplerate, downsampling option of input, or 0
  * mem             Encoder memory space, aligned to pointer type
  * return          Encoder as an handle, NULL on bad parameters
+ *
+ * The `sr_pcm_hz` parameter is a downsampling option of PCM input,
+ * the value `0` fallback to the samplerate of the encoded stream `sr_hz`.
+ * When used, `sr_pcm_hz` is intended to be higher or equal to the encoder
+ * samplerate `sr_hz`. The size of the context needed, given by
+ * `lc3_encoder_size()` will be set accordingly to `sr_pcm_hz`.
  */
-lc3_encoder_t lc3_setup_encoder(int dt_us, int sr_hz, void *mem);
+lc3_encoder_t lc3_setup_encoder(
+    int dt_us, int sr_hz, int sr_pcm_hz, void *mem);
 
 /**
  * Encode a frame
  * encoder         Handle of the encoder
- * pcm, pitch      Input PCM samples, and count between two consecutives
+ * fmt             PCM input format
+ * pcm, stride     Input PCM samples, and count between two consecutives
  * nbytes          Target size, in bytes, of the frame (20 to 400)
  * out             Output buffer of `nbytes` size
  * return          0: On success  -1: Wrong parameters
  */
-int lc3_encode(lc3_encoder_t encoder,
-    const int16_t *pcm, int pitch, int nbytes, void *out);
+int lc3_encode(lc3_encoder_t encoder, enum lc3_pcm_format fmt,
+    const void *pcm, int stride, int nbytes, void *out);
 
 /**
  * Return size needed for an decoder
  * dt_us           Frame duration in us, 7500 or 10000
  * sr_hz           Samplerate in Hz, 8000, 16000, 24000, 32000 or 48000
  * return          Size of then decoder in bytes, 0 on bad parameters
+ *
+ * The `sr_hz` parameter is the samplerate of the PCM output stream,
+ * and will match `sr_pcm_hz` of `lc3_setup_decoder()`.
  */
 unsigned lc3_decoder_size(int dt_us, int sr_hz);
 
@@ -240,20 +273,29 @@ unsigned lc3_decoder_size(int dt_us, int sr_hz);
  * Setup decoder
  * dt_us           Frame duration in us, 7500 or 10000
  * sr_hz           Samplerate in Hz, 8000, 16000, 24000, 32000 or 48000
+ * sr_pcm_hz       Output samplerate, upsampling option of output (or 0)
  * mem             Decoder memory space, aligned to pointer type
  * return          Decoder as an handle, NULL on bad parameters
+ *
+ * The `sr_pcm_hz` parameter is an upsampling option of PCM output,
+ * the value `0` fallback to the samplerate of the decoded stream `sr_hz`.
+ * When used, `sr_pcm_hz` is intended to be higher or equal to the decoder
+ * samplerate `sr_hz`. The size of the context needed, given by
+ * `lc3_decoder_size()` will be set accordingly to `sr_pcm_hz`.
  */
-lc3_decoder_t lc3_setup_decoder(int dt_us, int sr_hz, void *mem);
+lc3_decoder_t lc3_setup_decoder(
+    int dt_us, int sr_hz, int sr_pcm_hz, void *mem);
 
 /**
  * Decode a frame
  * decoder         Handle of the decoder
  * in, nbytes      Input bitstream, and size in bytes, NULL performs PLC
- * pcm, pitch      Output PCM samples, and count between two consecutives
+ * fmt             PCM output format
+ * pcm, stride     Output PCM samples, and count between two consecutives
  * return          0: On success  1: PLC operated  -1: Wrong parameters
  */
-int lc3_decode(lc3_decoder_t decoder,
-    const void *in, int nbytes, int16_t *pcm, int pitch);
+int lc3_decode(lc3_decoder_t decoder, const void *in, int nbytes,
+    enum lc3_pcm_format fmt, void *pcm, int stride);
 
 
 #ifdef __cplusplus

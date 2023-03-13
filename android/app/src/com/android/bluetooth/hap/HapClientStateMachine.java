@@ -73,7 +73,8 @@ final class HapClientStateMachine extends StateMachine {
     static final int STACK_EVENT = 101;
     private static final boolean DBG = true;
     private static final String TAG = "HapClientStateMachine";
-    private static final int CONNECT_TIMEOUT = 201;
+    @VisibleForTesting
+    static final int CONNECT_TIMEOUT = 201;
 
     // NOTE: the value is not "final" - it is modified in the unit tests
     @VisibleForTesting
@@ -238,7 +239,7 @@ final class HapClientStateMachine extends StateMachine {
 
         @Override
         public boolean processMessage(Message message) {
-            log("Disconnected process message(" + mDevice + "): " + messageWhatToString(
+            log("Disconnected: process message(" + mDevice + "): " + messageWhatToString(
                     message.what));
 
             switch (message.what) {
@@ -343,7 +344,7 @@ final class HapClientStateMachine extends StateMachine {
 
         @Override
         public boolean processMessage(Message message) {
-            log("Connecting process message(" + mDevice + "): "
+            log("Connecting: process message(" + mDevice + "): "
                     + messageWhatToString(message.what));
 
             switch (message.what) {
@@ -430,7 +431,7 @@ final class HapClientStateMachine extends StateMachine {
 
         @Override
         public boolean processMessage(Message message) {
-            log("Disconnecting process message(" + mDevice + "): "
+            log("Disconnecting: process message(" + mDevice + "): "
                     + messageWhatToString(message.what));
 
             switch (message.what) {
@@ -530,7 +531,7 @@ final class HapClientStateMachine extends StateMachine {
 
         @Override
         public boolean processMessage(Message message) {
-            log("Connected process message(" + mDevice + "): "
+            log("Connected: process message(" + mDevice + "): "
                     + messageWhatToString(message.what));
 
             switch (message.what) {

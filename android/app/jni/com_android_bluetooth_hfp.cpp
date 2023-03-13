@@ -16,8 +16,6 @@
 
 #define LOG_TAG "BluetoothHeadsetServiceJni"
 
-#define LOG_NDEBUG 0
-
 #include "com_android_bluetooth.h"
 #include "hardware/bluetooth_headset_callbacks.h"
 #include "hardware/bluetooth_headset_interface.h"
@@ -183,7 +181,6 @@ class JniHeadsetCallbacks : bluetooth::headset::Callbacks {
 
     char null_str[] = "";
     if (!sCallbackEnv.isValidUtf(number)) {
-      android_errorWriteLog(0x534e4554, "109838537");
       ALOGE("%s: number is not a valid UTF string.", __func__);
       number = null_str;
     }
@@ -327,7 +324,6 @@ class JniHeadsetCallbacks : bluetooth::headset::Callbacks {
 
     char null_str[] = "";
     if (!sCallbackEnv.isValidUtf(at_string)) {
-      android_errorWriteLog(0x534e4554, "109838537");
       ALOGE("%s: at_string is not a valid UTF string.", __func__);
       at_string = null_str;
     }
@@ -363,7 +359,6 @@ class JniHeadsetCallbacks : bluetooth::headset::Callbacks {
 
     char null_str[] = "";
     if (!sCallbackEnv.isValidUtf(at_string)) {
-      android_errorWriteLog(0x534e4554, "109838537");
       ALOGE("%s: at_string is not a valid UTF string.", __func__);
       at_string = null_str;
     }

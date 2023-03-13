@@ -25,6 +25,7 @@
 #define BTA_GATTC_INT_H
 
 #include <cstdint>
+#include <deque>
 
 #include "bt_target.h"  // Must be first to define build configuration
 #include "bta/gatt/database.h"
@@ -88,13 +89,21 @@ typedef struct {
   BT_HDR_RIGID hdr;
   RawAddress remote_bda;
   tGATT_IF client_if;
-  bool is_direct;
+  tBTM_BLE_CONN_TYPE connection_type;
   tBT_TRANSPORT transport;
   uint8_t initiating_phys;
   bool opportunistic;
 } tBTA_GATTC_API_OPEN;
 
-typedef tBTA_GATTC_API_OPEN tBTA_GATTC_API_CANCEL_OPEN;
+typedef struct {
+  BT_HDR_RIGID hdr;
+  RawAddress remote_bda;
+  tGATT_IF client_if;
+  bool is_direct;
+  tBT_TRANSPORT transport;
+  uint8_t initiating_phys;
+  bool opportunistic;
+} tBTA_GATTC_API_CANCEL_OPEN;
 
 typedef struct {
   BT_HDR_RIGID hdr;
@@ -230,6 +239,7 @@ typedef struct {
 
 typedef struct {
   bool in_use;
+  bool app_disconnected;
   RawAddress remote_bda;
   uint16_t handle;
 } tBTA_GATTC_NOTIF_REG;
@@ -253,11 +263,13 @@ typedef struct {
   tBTA_GATTC_RCB* p_rcb;    /* pointer to the registration CB */
   tBTA_GATTC_SERV* p_srcb;  /* server cache CB */
   const tBTA_GATTC_DATA* p_q_cmd; /* command in queue waiting for execution */
+  std::deque<const tBTA_GATTC_DATA*> p_q_cmd_queue;
 
 // request during discover state
 #define BTA_GATTC_DISCOVER_REQ_NONE 0
 #define BTA_GATTC_DISCOVER_REQ_READ_EXT_PROP_DESC 1
 #define BTA_GATTC_DISCOVER_REQ_READ_DB_HASH 2
+#define BTA_GATTC_DISCOVER_REQ_READ_DB_HASH_FOR_SVC_CHG 3
 
   uint8_t request_during_discovery; /* request during discover state */
 
@@ -411,6 +423,7 @@ extern tBTA_GATTC_CLCB* bta_gattc_clcb_alloc(tGATT_IF client_if,
                                              const RawAddress& remote_bda,
                                              tBT_TRANSPORT transport);
 extern void bta_gattc_clcb_dealloc(tBTA_GATTC_CLCB* p_clcb);
+extern void bta_gattc_server_disconnected(tBTA_GATTC_SERV* p_srcb);
 extern tBTA_GATTC_CLCB* bta_gattc_find_alloc_clcb(tGATT_IF client_if,
                                                   const RawAddress& remote_bda,
                                                   tBT_TRANSPORT transport);
@@ -421,8 +434,16 @@ extern tBTA_GATTC_SERV* bta_gattc_find_scb_by_cid(uint16_t conn_id);
 extern tBTA_GATTC_CLCB* bta_gattc_find_int_conn_clcb(tBTA_GATTC_DATA* p_msg);
 extern tBTA_GATTC_CLCB* bta_gattc_find_int_disconn_clcb(tBTA_GATTC_DATA* p_msg);
 
-extern bool bta_gattc_enqueue(tBTA_GATTC_CLCB* p_clcb,
-                              const tBTA_GATTC_DATA* p_data);
+enum BtaEnqueuedResult_t {
+  ENQUEUED_READY_TO_SEND,
+  ENQUEUED_FOR_LATER,
+};
+
+extern BtaEnqueuedResult_t bta_gattc_enqueue(tBTA_GATTC_CLCB* p_clcb,
+                                             const tBTA_GATTC_DATA* p_data);
+extern bool bta_gattc_is_data_queued(tBTA_GATTC_CLCB* p_clcb,
+                                     const tBTA_GATTC_DATA* p_data);
+extern void bta_gattc_continue(tBTA_GATTC_CLCB* p_clcb);
 
 extern bool bta_gattc_check_notif_registry(tBTA_GATTC_RCB* p_clreg,
                                            tBTA_GATTC_SERV* p_srcb,
@@ -476,9 +497,18 @@ extern tBTA_GATTC_CONN* bta_gattc_conn_find(const RawAddress& remote_bda);
 extern tBTA_GATTC_CONN* bta_gattc_conn_find_alloc(const RawAddress& remote_bda);
 extern bool bta_gattc_conn_dealloc(const RawAddress& remote_bda);
 
-extern bool bta_gattc_cache_load(tBTA_GATTC_SERV* p_srcb);
-extern void bta_gattc_cache_reset(const RawAddress& server_bda);
+/* bta_gattc_cache */
+extern bool bta_gattc_read_db_hash(tBTA_GATTC_CLCB* p_clcb, bool is_svc_chg);
 
-extern bool bta_gattc_read_db_hash(tBTA_GATTC_CLCB* p_clcb);
+/* bta_gattc_db_storage */
+extern gatt::Database bta_gattc_hash_load(const Octet16& hash);
+extern bool bta_gattc_hash_write(const Octet16& hash,
+                                 const gatt::Database& database);
+extern gatt::Database bta_gattc_cache_load(const RawAddress& server_bda);
+extern void bta_gattc_cache_write(const RawAddress& server_bda,
+                                  const gatt::Database& database);
+extern void bta_gattc_cache_link(const RawAddress& server_bda,
+                                 const Octet16& hash);
+extern void bta_gattc_cache_reset(const RawAddress& server_bda);
 
 #endif /* BTA_GATTC_INT_H */

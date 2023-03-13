@@ -16,7 +16,6 @@
 
 #include "service/low_energy_scanner.h"
 
-#include <base/macros.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
@@ -70,22 +69,19 @@ class MockScannerHandler : public BleScannerInterface {
 
   MOCK_METHOD2(BatchscanReadReports, void(int client_if, int scan_mode));
 
-  MOCK_METHOD7(StartSync, void(uint8_t, RawAddress, uint16_t, uint16_t,
-                               StartSyncCb, SyncReportCb, SyncLostCb));
+  MOCK_METHOD5(StartSync, void(uint8_t, RawAddress, uint16_t, uint16_t, int));
   MOCK_METHOD1(StopSync, void(uint16_t));
 
   MOCK_METHOD1(RegisterCallbacks, void(ScanningCallbacks* callbacks));
 
   MOCK_METHOD2(CancelCreateSync, void(uint8_t, RawAddress));
 
-  MOCK_METHOD4(TransferSync,
-               void(RawAddress, uint16_t, uint16_t, SyncTransferCb));
+  MOCK_METHOD4(TransferSync, void(RawAddress, uint16_t, uint16_t, int));
 
-  MOCK_METHOD4(TransferSetInfo,
-               void(RawAddress, uint16_t, uint8_t, SyncTransferCb));
+  MOCK_METHOD4(TransferSetInfo, void(RawAddress, uint16_t, uint8_t, int));
 
   MOCK_METHOD5(SyncTxParameters,
-               void(RawAddress, uint8_t, uint16_t, uint16_t, StartSyncCb));
+               void(RawAddress, uint8_t, uint16_t, uint16_t, int));
 
   void ScanFilterAdd(int filter_index, std::vector<ApcfCommand> filters,
                      FilterConfigCallback cb) override{};
@@ -103,6 +99,9 @@ class TestDelegate : public LowEnergyScanner::Delegate {
  public:
   TestDelegate() : scan_result_count_(0) {}
 
+  TestDelegate(const TestDelegate&) = delete;
+  TestDelegate& operator=(const TestDelegate&) = delete;
+
   ~TestDelegate() override = default;
 
   int scan_result_count() const { return scan_result_count_; }
@@ -118,13 +117,14 @@ class TestDelegate : public LowEnergyScanner::Delegate {
  private:
   int scan_result_count_;
   ScanResult last_scan_result_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestDelegate);
 };
 
 class LowEnergyScannerTest : public ::testing::Test {
  public:
   LowEnergyScannerTest() = default;
+  LowEnergyScannerTest(const LowEnergyScannerTest&) = delete;
+  LowEnergyScannerTest& operator=(const LowEnergyScannerTest&) = delete;
+
   ~LowEnergyScannerTest() override = default;
 
   void SetUp() override {
@@ -147,15 +147,18 @@ class LowEnergyScannerTest : public ::testing::Test {
   testing::MockAdapter mock_adapter_;
   std::shared_ptr<MockScannerHandler> mock_handler_;
   std::unique_ptr<LowEnergyScannerFactory> ble_factory_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(LowEnergyScannerTest);
 };
 
 // Used for tests that operate on a pre-registered scanner.
 class LowEnergyScannerPostRegisterTest : public LowEnergyScannerTest {
  public:
   LowEnergyScannerPostRegisterTest() : next_scanner_id_(0) {}
+
+  LowEnergyScannerPostRegisterTest(const LowEnergyScannerPostRegisterTest&) =
+      delete;
+  LowEnergyScannerPostRegisterTest& operator=(
+      const LowEnergyScannerPostRegisterTest&) = delete;
+
   ~LowEnergyScannerPostRegisterTest() override = default;
 
   void SetUp() override {
@@ -203,8 +206,6 @@ class LowEnergyScannerPostRegisterTest : public LowEnergyScannerTest {
 
  private:
   int next_scanner_id_;
-
-  DISALLOW_COPY_AND_ASSIGN(LowEnergyScannerPostRegisterTest);
 };
 
 TEST_F(LowEnergyScannerTest, RegisterInstance) {

@@ -21,17 +21,24 @@ import android.bluetooth.BluetoothA2dp.OptionalCodecsPreferenceStatus;
 import android.bluetooth.BluetoothA2dp.OptionalCodecsSupportStatus;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothProfile;
+import android.bluetooth.BluetoothUtils;
 
 import androidx.annotation.NonNull;
 import androidx.room.Embedded;
 import androidx.room.Entity;
 import androidx.room.PrimaryKey;
 
+import com.android.internal.annotations.VisibleForTesting;
+
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * @hide
+ */
 @Entity(tableName = "metadata")
-class Metadata {
+@VisibleForTesting
+public class Metadata {
     @PrimaryKey
     @NonNull
     private String address;
@@ -62,8 +69,24 @@ class Metadata {
         is_active_a2dp_device = true;
     }
 
-    String getAddress() {
+    /**
+     * @hide
+     */
+    @VisibleForTesting
+    public String getAddress() {
         return address;
+    }
+
+    /**
+     * Returns the anonymized hardware address. The first three octets will be suppressed for
+     * anonymization.
+     * <p> For example, "XX:XX:XX:AA:BB:CC".
+     *
+     * @return Anonymized bluetooth hardware address as string
+     */
+    @NonNull
+    public String getAnonymizedAddress() {
+        return BluetoothUtils.toAnonymizedAddress(address);
     }
 
     void setProfileConnectionPolicy(int profile, int connectionPolicy) {
@@ -125,12 +148,22 @@ class Metadata {
             case BluetoothProfile.LE_CALL_CONTROL:
                 profileConnectionPolicies.le_call_control_connection_policy = connectionPolicy;
                 break;
+            case BluetoothProfile.LE_AUDIO_BROADCAST_ASSISTANT:
+                profileConnectionPolicies.bass_client_connection_policy = connectionPolicy;
+                break;
+            case BluetoothProfile.BATTERY:
+                profileConnectionPolicies.battery_connection_policy = connectionPolicy;
+                break;
             default:
                 throw new IllegalArgumentException("invalid profile " + profile);
         }
     }
 
-    int getProfileConnectionPolicy(int profile) {
+    /**
+     * @hide
+     */
+    @VisibleForTesting
+    public int getProfileConnectionPolicy(int profile) {
         switch (profile) {
             case BluetoothProfile.A2DP:
                 return profileConnectionPolicies.a2dp_connection_policy;
@@ -166,6 +199,10 @@ class Metadata {
                 return profileConnectionPolicies.csip_set_coordinator_connection_policy;
             case BluetoothProfile.LE_CALL_CONTROL:
                 return profileConnectionPolicies.le_call_control_connection_policy;
+            case BluetoothProfile.LE_AUDIO_BROADCAST_ASSISTANT:
+                return profileConnectionPolicies.bass_client_connection_policy;
+            case BluetoothProfile.BATTERY:
+                return profileConnectionPolicies.battery_connection_policy;
         }
         return BluetoothProfile.CONNECTION_POLICY_UNKNOWN;
     }
@@ -244,10 +281,23 @@ class Metadata {
             case BluetoothDevice.METADATA_UNTETHERED_CASE_LOW_BATTERY_THRESHOLD:
                 publicMetadata.untethered_case_low_battery_threshold = value;
                 break;
+            case BluetoothDevice.METADATA_SPATIAL_AUDIO:
+                publicMetadata.spatial_audio = value;
+                break;
+            case BluetoothDevice.METADATA_FAST_PAIR_CUSTOMIZED_FIELDS:
+                publicMetadata.fastpair_customized = value;
+                break;
+            case BluetoothDevice.METADATA_LE_AUDIO:
+                publicMetadata.le_audio = value;
+                break;
         }
     }
 
-    byte[] getCustomizedMeta(int key) {
+    /**
+     * @hide
+     */
+    @VisibleForTesting
+    public byte[] getCustomizedMeta(int key) {
         byte[] value = null;
         switch (key) {
             case BluetoothDevice.METADATA_MANUFACTURER_NAME:
@@ -322,6 +372,15 @@ class Metadata {
             case BluetoothDevice.METADATA_UNTETHERED_CASE_LOW_BATTERY_THRESHOLD:
                 value = publicMetadata.untethered_case_low_battery_threshold;
                 break;
+            case BluetoothDevice.METADATA_SPATIAL_AUDIO:
+                value = publicMetadata.spatial_audio;
+                break;
+            case BluetoothDevice.METADATA_FAST_PAIR_CUSTOMIZED_FIELDS:
+                value = publicMetadata.fastpair_customized;
+                break;
+            case BluetoothDevice.METADATA_LE_AUDIO:
+                value = publicMetadata.le_audio;
+                break;
         }
         return value;
     }
@@ -338,7 +397,8 @@ class Metadata {
 
     public String toString() {
         StringBuilder builder = new StringBuilder();
-        builder.append(address)
+        builder.append(getAnonymizedAddress())
+            .append(" last_active_time=" + last_active_time)
             .append(" {profile connection policy(")
             .append(profileConnectionPolicies)
             .append("), optional codec(support=")

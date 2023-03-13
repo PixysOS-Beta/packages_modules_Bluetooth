@@ -83,8 +83,6 @@ public class A2dpServiceTest {
     @Before
     public void setUp() throws Exception {
         mTargetContext = InstrumentationRegistry.getTargetContext();
-        Assume.assumeTrue("Ignore test when A2dpService is not enabled",
-                mTargetContext.getResources().getBoolean(R.bool.profile_supported_a2dp));
         // Set up mocks and test assets
         MockitoAnnotations.initMocks(this);
 
@@ -93,6 +91,7 @@ public class A2dpServiceTest {
         }
 
         TestUtils.setAdapterService(mAdapterService);
+        doReturn(true).when(mAdapterService).isA2dpOffloadEnabled();
         doReturn(MAX_CONNECTED_AUDIO_DEVICES).when(mAdapterService).getMaxConnectedAudioDevices();
         doReturn(true, false).when(mAdapterService).isStartedProfile(anyString());
         doReturn(false).when(mAdapterService).isQuietModeEnabled();
@@ -124,9 +123,6 @@ public class A2dpServiceTest {
 
     @After
     public void tearDown() throws Exception {
-        if (!mTargetContext.getResources().getBoolean(R.bool.profile_supported_a2dp)) {
-            return;
-        }
         stopService();
         mTargetContext.unregisterReceiver(mA2dpIntentReceiver);
         mConnectionStateChangedQueue.clear();
@@ -868,6 +864,11 @@ public class A2dpServiceTest {
                 BluetoothA2dp.OPTIONAL_CODECS_NOT_SUPPORTED, false,
                 BluetoothA2dp.OPTIONAL_CODECS_PREF_DISABLED,
                 verifySupportTime, verifyNotSupportTime, verifyEnabledTime);
+    }
+
+    @Test
+    public void testDumpDoesNotCrash() {
+        mA2dpService.dump(new StringBuilder());
     }
 
     private void connectDevice(BluetoothDevice device) {

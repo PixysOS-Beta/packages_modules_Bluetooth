@@ -18,6 +18,7 @@
 #include <base/bind.h>
 #include <base/logging.h>
 #include <base/strings/string_number_conversions.h>
+#include <base/strings/string_util.h>
 #include <hardware/bt_vc.h>
 
 #include <string>
@@ -31,7 +32,10 @@
 #include "bta_vc_api.h"
 #include "btif_storage.h"
 #include "devices.h"
+#include "gd/common/strings.h"
+#include "osi/include/log.h"
 #include "osi/include/osi.h"
+#include "stack/btm/btm_sec.h"
 #include "types/bluetooth/uuid.h"
 #include "types/raw_address.h"
 
@@ -52,7 +56,9 @@ VolumeControlImpl* instance;
  * Profile (VCP)
  *
  * Each connected peer device supporting Volume Control Service (VCS) is on the
- * list of devices (volume_control_devices_).
+ * list of devices (volume_control_devices_). When VCS is discovered on the peer
+ * device, Android does search for all the instances Volume Offset Service
+ * (VOCS). Note that AIS and VOCS are optional.
  *
  * Once all the mandatory characteristis for all the services are discovered,
  * Fluoride calls ON_CONNECTED callback.
@@ -61,7 +67,13 @@ VolumeControlImpl* instance;
  * profile e.g. Volume up/down, mute/unmute etc, profile configures all the
  * devices which are active Le Audio devices.
  *
- *
+ * Peer devices has at maximum one instance of VCS and 0 or more instance of
+ * VOCS. Android gets access to External Audio Outputs using appropriate ID.
+ * Also each of the External Device has description
+ * characteristic and Type which gives the application hint what it is a device.
+ * Examples of such devices:
+ *   External Output: 1 instance to controller ballance between set of devices
+ *   External Output: each of 5.1 speaker set etc.
  */
 class VolumeControlImpl : public VolumeControl {
  public:
@@ -92,7 +104,7 @@ class VolumeControlImpl : public VolumeControl {
       device->connecting_actively = true;
     }
 
-    BTA_GATTC_Open(gatt_if_, address, true, false);
+    BTA_GATTC_Open(gatt_if_, address, BTM_BLE_DIRECT_CONNECTION, false);
   }
 
   void AddFromStorage(const RawAddress& address, bool auto_connect) {
@@ -103,7 +115,7 @@ class VolumeControlImpl : public VolumeControl {
       volume_control_devices_.Add(address, false);
 
       /* Add device into BG connection to accept remote initiated connection */
-      BTA_GATTC_Open(gatt_if_, address, false, false);
+      BTA_GATTC_Open(gatt_if_, address, BTM_BLE_BKG_CONNECT_ALLOW_LIST, false);
     }
   }
 
@@ -133,9 +145,7 @@ class VolumeControlImpl : public VolumeControl {
       return;
     }
 
-    if (!device->EnableEncryption(enc_callback_static)) {
-      device_cleanup_helper(device, device->connecting_actively);
-    }
+    device->EnableEncryption();
   }
 
   void OnEncryptionComplete(const RawAddress& address, uint8_t success) {
@@ -254,6 +264,27 @@ class VolumeControlImpl : public VolumeControl {
       return;
     }
 
+    const gatt::Service* service = BTA_GATTC_GetOwningService(conn_id, handle);
+    if (service == nullptr) return;
+
+    VolumeOffset* offset =
+        device->audio_offsets.FindByServiceHandle(service->handle);
+    if (offset != nullptr) {
+      if (handle == offset->state_handle) {
+        OnExtAudioOutStateChanged(device, offset, len, value);
+      } else if (handle == offset->audio_location_handle) {
+        OnExtAudioOutLocationChanged(device, offset, len, value);
+      } else if (handle == offset->audio_descr_handle) {
+        OnOffsetOutputDescChanged(device, offset, len, value);
+      } else {
+        LOG(ERROR) << __func__ << ": unknown offset handle=" << loghex(handle);
+        return;
+      }
+
+      verify_device_ready(device, handle);
+      return;
+    }
+
     LOG(ERROR) << __func__ << ": unknown handle=" << loghex(handle);
   }
 
@@ -308,6 +339,13 @@ class VolumeControlImpl : public VolumeControl {
       }
     }
 
+    if (devices.empty() && (is_volume_change || is_mute_change)) {
+      LOG_INFO("No more devices in the group right now");
+      callbacks_->OnGroupVolumeStateChanged(group_id, device->volume,
+                                            device->mute, true);
+      return;
+    }
+
     if (is_volume_change) {
       std::vector<uint8_t> arg({device->volume});
       PrepareVolumeControlOperation(devices, group_id, true,
@@ -349,7 +387,11 @@ class VolumeControlImpl : public VolumeControl {
               << loghex(device->mute) << " change_counter "
               << loghex(device->change_counter);
 
-    if (!device->device_ready) return;
+    if (!device->IsReady()) {
+      LOG_INFO("Device: %s is not ready yet.",
+               device->address.ToString().c_str());
+      return;
+    }
 
     /* This is just a read, send single notification */
     if (!is_notification) {
@@ -403,6 +445,93 @@ class VolumeControlImpl : public VolumeControl {
     device->flags = *value;
 
     LOG(INFO) << __func__ << " flags " << loghex(device->flags);
+  }
+
+  void OnExtAudioOutStateChanged(VolumeControlDevice* device,
+                                 VolumeOffset* offset, uint16_t len,
+                                 uint8_t* value) {
+    if (len != 3) {
+      LOG(INFO) << __func__ << ": malformed len=" << loghex(len);
+      return;
+    }
+
+    uint8_t* pp = value;
+    STREAM_TO_UINT16(offset->offset, pp);
+    STREAM_TO_UINT8(offset->change_counter, pp);
+
+    LOG(INFO) << __func__ << " " << base::HexEncode(value, len);
+    LOG(INFO) << __func__ << " id: " << loghex(offset->id)
+              << " offset: " << loghex(offset->offset)
+              << " counter: " << loghex(offset->change_counter);
+
+    if (!device->IsReady()) {
+      LOG_INFO("Device: %s is not ready yet.",
+               device->address.ToString().c_str());
+      return;
+    }
+
+    callbacks_->OnExtAudioOutVolumeOffsetChanged(device->address, offset->id,
+                                                 offset->offset);
+  }
+
+  void OnExtAudioOutLocationChanged(VolumeControlDevice* device,
+                                    VolumeOffset* offset, uint16_t len,
+                                    uint8_t* value) {
+    if (len != 4) {
+      LOG(INFO) << __func__ << ": malformed len=" << loghex(len);
+      return;
+    }
+
+    uint8_t* pp = value;
+    STREAM_TO_UINT32(offset->location, pp);
+
+    LOG(INFO) << __func__ << " " << base::HexEncode(value, len);
+    LOG(INFO) << __func__ << "id " << loghex(offset->id) << "location "
+              << loghex(offset->location);
+
+    if (!device->IsReady()) {
+      LOG_INFO("Device: %s is not ready yet.",
+               device->address.ToString().c_str());
+      return;
+    }
+
+    callbacks_->OnExtAudioOutLocationChanged(device->address, offset->id,
+                                             offset->location);
+  }
+
+  void OnExtAudioOutCPWrite(uint16_t connection_id, tGATT_STATUS status,
+                            uint16_t handle, void* /*data*/) {
+    VolumeControlDevice* device =
+        volume_control_devices_.FindByConnId(connection_id);
+    if (!device) {
+      LOG(ERROR) << __func__
+                 << "Skipping unknown device disconnect, connection_id="
+                 << loghex(connection_id);
+      return;
+    }
+
+    LOG(INFO) << "Offset Control Point write response handle" << loghex(handle)
+              << " status: " << loghex((int)(status));
+
+    /* TODO Design callback API to notify about changes */
+  }
+
+  void OnOffsetOutputDescChanged(VolumeControlDevice* device,
+                                 VolumeOffset* offset, uint16_t len,
+                                 uint8_t* value) {
+    std::string description = std::string(value, value + len);
+    if (!base::IsStringUTF8(description)) description = "<invalid utf8 string>";
+
+    LOG(INFO) << __func__ << " " << description;
+
+    if (!device->IsReady()) {
+      LOG_INFO("Device: %s is not ready yet.",
+               device->address.ToString().c_str());
+      return;
+    }
+
+    callbacks_->OnExtAudioOutDescriptionChanged(device->address, offset->id,
+                                                std::move(description));
   }
 
   void OnGattWriteCcc(uint16_t connection_id, tGATT_STATUS status,
@@ -469,7 +598,7 @@ class VolumeControlImpl : public VolumeControl {
     }
 
     // If we get here, it means, device has not been exlicitly disconnected.
-    bool device_ready = device->device_ready;
+    bool device_ready = device->IsReady();
 
     device_cleanup_helper(device, device->connecting_actively);
 
@@ -477,7 +606,8 @@ class VolumeControlImpl : public VolumeControl {
       volume_control_devices_.Add(remote_bda, true);
 
       /* Add device into BG connection to accept remote initiated connection */
-      BTA_GATTC_Open(gatt_if_, remote_bda, false, false);
+      BTA_GATTC_Open(gatt_if_, remote_bda, BTM_BLE_BKG_CONNECT_ALLOW_LIST,
+                     false);
     }
   }
 
@@ -501,6 +631,37 @@ class VolumeControlImpl : public VolumeControl {
         StartQueueOperation();
       }
       return;
+    }
+  }
+
+  void RemovePendingVolumeControlOperations(std::vector<RawAddress>& devices,
+                                            int group_id) {
+    for (auto op = ongoing_operations_.begin();
+         op != ongoing_operations_.end();) {
+      // We only remove operations that don't affect the mute field.
+      if (op->IsStarted() ||
+          (op->opcode_ != kControlPointOpcodeSetAbsoluteVolume &&
+           op->opcode_ != kControlPointOpcodeVolumeUp &&
+           op->opcode_ != kControlPointOpcodeVolumeDown)) {
+        op++;
+        continue;
+      }
+      if (group_id != bluetooth::groups::kGroupUnknown &&
+          op->group_id_ == group_id) {
+        op = ongoing_operations_.erase(op);
+        continue;
+      }
+      for (auto const& addr : devices) {
+        auto it = find(op->devices_.begin(), op->devices_.end(), addr);
+        if (it != op->devices_.end()) {
+          op->devices_.erase(it);
+        }
+      }
+      if (op->devices_.empty()) {
+        op = ongoing_operations_.erase(op);
+      } else {
+        op++;
+      }
     }
   }
 
@@ -593,37 +754,61 @@ class VolumeControlImpl : public VolumeControl {
     devices_control_point_helper(op->devices_, op->opcode_, &(op->arguments_));
   }
 
-  void PrepareVolumeControlOperation(std::vector<RawAddress>& devices,
+  void PrepareVolumeControlOperation(std::vector<RawAddress> devices,
                                      int group_id, bool is_autonomous,
                                      uint8_t opcode,
                                      std::vector<uint8_t>& arguments) {
-    DLOG(INFO) << __func__ << " num of devices: " << devices.size()
-               << " group_id: " << group_id << " is_autonomous: " << is_autonomous
-               << " opcode: " << +opcode
-               << " arg size: " << arguments.size();
+    LOG_DEBUG(
+        "num of devices: %zu, group_id: %d, is_autonomous: %s  opcode: %d, arg "
+        "size: %zu",
+        devices.size(), group_id, is_autonomous ? "true" : "false", +opcode,
+        arguments.size());
 
-    ongoing_operations_.emplace_back(latest_operation_id_++, group_id, is_autonomous,
-                                     opcode, arguments, devices);
+    if (std::find_if(ongoing_operations_.begin(), ongoing_operations_.end(),
+                     [opcode, &devices, &arguments](const VolumeOperation& op) {
+                       if (op.opcode_ != opcode) return false;
+                       if (!std::equal(op.arguments_.begin(),
+                                       op.arguments_.end(), arguments.begin()))
+                         return false;
+                       // Filter out all devices which have the exact operation
+                       // already scheduled
+                       devices.erase(
+                           std::remove_if(devices.begin(), devices.end(),
+                                          [&op](auto d) {
+                                            return find(op.devices_.begin(),
+                                                        op.devices_.end(),
+                                                        d) != op.devices_.end();
+                                          }),
+                           devices.end());
+                       return devices.empty();
+                     }) == ongoing_operations_.end()) {
+      ongoing_operations_.emplace_back(latest_operation_id_++, group_id,
+                                       is_autonomous, opcode, arguments,
+                                       devices);
+    }
   }
 
-  void SetVolume(std::variant<RawAddress, int> addr_or_group_id,
-                 uint8_t volume) override {
-    DLOG(INFO) << __func__ << " vol: " << +volume;
+  void MuteUnmute(std::variant<RawAddress, int> addr_or_group_id, bool mute) {
+    std::vector<uint8_t> arg;
 
-    std::vector<uint8_t> arg({volume});
-    uint8_t opcode = kControlPointOpcodeSetAbsoluteVolume;
+    uint8_t opcode = mute ? kControlPointOpcodeMute : kControlPointOpcodeUnmute;
 
     if (std::holds_alternative<RawAddress>(addr_or_group_id)) {
-      DLOG(INFO) << __func__ << " " << std::get<RawAddress>(addr_or_group_id);
-      std::vector<RawAddress> devices = {
-          std::get<RawAddress>(addr_or_group_id)};
-
-      PrepareVolumeControlOperation(devices, bluetooth::groups::kGroupUnknown, false,
-                                    opcode, arg);
+      VolumeControlDevice* dev = volume_control_devices_.FindByAddress(
+          std::get<RawAddress>(addr_or_group_id));
+      if (dev != nullptr) {
+        LOG_DEBUG("Address: %s: isReady: %s", dev->address.ToString().c_str(),
+                  dev->IsReady() ? "true" : "false");
+        if (dev->IsReady()) {
+          std::vector<RawAddress> devices = {dev->address};
+          PrepareVolumeControlOperation(
+              devices, bluetooth::groups::kGroupUnknown, false, opcode, arg);
+        }
+      }
     } else {
       /* Handle group change */
       auto group_id = std::get<int>(addr_or_group_id);
-      DLOG(INFO) << __func__ << " group: " << group_id;
+      LOG_DEBUG("group: %d", group_id);
       auto csis_api = CsisClient::Get();
       if (!csis_api) {
         LOG(ERROR) << __func__ << " Csis is not there";
@@ -633,7 +818,7 @@ class VolumeControlImpl : public VolumeControl {
       auto devices = csis_api->GetDeviceList(group_id);
       for (auto it = devices.begin(); it != devices.end();) {
         auto dev = volume_control_devices_.FindByAddress(*it);
-        if (!dev || !dev->IsConnected()) {
+        if (!dev || !dev->IsReady()) {
           it = devices.erase(it);
         } else {
           it++;
@@ -650,6 +835,147 @@ class VolumeControlImpl : public VolumeControl {
     }
 
     StartQueueOperation();
+  }
+
+  void Mute(std::variant<RawAddress, int> addr_or_group_id) override {
+    LOG_DEBUG();
+    MuteUnmute(addr_or_group_id, true /* mute */);
+  }
+
+  void UnMute(std::variant<RawAddress, int> addr_or_group_id) override {
+    LOG_DEBUG();
+    MuteUnmute(addr_or_group_id, false /* mute */);
+  }
+
+  void SetVolume(std::variant<RawAddress, int> addr_or_group_id,
+                 uint8_t volume) override {
+    DLOG(INFO) << __func__ << " vol: " << +volume;
+
+    std::vector<uint8_t> arg({volume});
+    uint8_t opcode = kControlPointOpcodeSetAbsoluteVolume;
+
+    if (std::holds_alternative<RawAddress>(addr_or_group_id)) {
+      LOG_DEBUG("Address: %s: ",
+                std::get<RawAddress>(addr_or_group_id).ToString().c_str());
+      VolumeControlDevice* dev = volume_control_devices_.FindByAddress(
+          std::get<RawAddress>(addr_or_group_id));
+      if (dev != nullptr) {
+        LOG_DEBUG("Address: %s: isReady: %s", dev->address.ToString().c_str(),
+                  dev->IsReady() ? "true" : "false");
+        if (dev->IsReady() && (dev->volume != volume)) {
+          std::vector<RawAddress> devices = {dev->address};
+          RemovePendingVolumeControlOperations(
+              devices, bluetooth::groups::kGroupUnknown);
+          PrepareVolumeControlOperation(
+              devices, bluetooth::groups::kGroupUnknown, false, opcode, arg);
+        }
+      }
+    } else {
+      /* Handle group change */
+      auto group_id = std::get<int>(addr_or_group_id);
+      DLOG(INFO) << __func__ << " group: " << group_id;
+      auto csis_api = CsisClient::Get();
+      if (!csis_api) {
+        LOG(ERROR) << __func__ << " Csis is not there";
+        return;
+      }
+
+      auto devices = csis_api->GetDeviceList(group_id);
+      for (auto it = devices.begin(); it != devices.end();) {
+        auto dev = volume_control_devices_.FindByAddress(*it);
+        if (!dev || !dev->IsReady()) {
+          it = devices.erase(it);
+        } else {
+          it++;
+        }
+      }
+
+      if (devices.empty()) {
+        LOG(ERROR) << __func__ << " group id : " << group_id
+                   << " is not connected? ";
+        return;
+      }
+
+      RemovePendingVolumeControlOperations(devices, group_id);
+      PrepareVolumeControlOperation(devices, group_id, false, opcode, arg);
+    }
+
+    StartQueueOperation();
+  }
+
+  /* Methods to operate on Volume Control Offset Service (VOCS) */
+  void GetExtAudioOutVolumeOffset(const RawAddress& address,
+                                  uint8_t ext_output_id) override {
+    VolumeControlDevice* device =
+        volume_control_devices_.FindByAddress(address);
+    if (!device) {
+      LOG(ERROR) << __func__ << ", no such device!";
+      return;
+    }
+
+    device->GetExtAudioOutVolumeOffset(ext_output_id, chrc_read_callback_static,
+                                       nullptr);
+  }
+
+  void SetExtAudioOutVolumeOffset(const RawAddress& address,
+                                  uint8_t ext_output_id,
+                                  int16_t offset_val) override {
+    std::vector<uint8_t> arg(2);
+    uint8_t* ptr = arg.data();
+    UINT16_TO_STREAM(ptr, offset_val);
+    ext_audio_out_control_point_helper(
+        address, ext_output_id, kVolumeOffsetControlPointOpcodeSet, &arg);
+  }
+
+  void GetExtAudioOutLocation(const RawAddress& address,
+                              uint8_t ext_output_id) override {
+    VolumeControlDevice* device =
+        volume_control_devices_.FindByAddress(address);
+    if (!device) {
+      LOG(ERROR) << __func__ << ", no such device!";
+      return;
+    }
+
+    device->GetExtAudioOutLocation(ext_output_id, chrc_read_callback_static,
+                                   nullptr);
+  }
+
+  void SetExtAudioOutLocation(const RawAddress& address, uint8_t ext_output_id,
+                              uint32_t location) override {
+    VolumeControlDevice* device =
+        volume_control_devices_.FindByAddress(address);
+    if (!device) {
+      LOG(ERROR) << __func__ << ", no such device!";
+      return;
+    }
+
+    device->SetExtAudioOutLocation(ext_output_id, location);
+  }
+
+  void GetExtAudioOutDescription(const RawAddress& address,
+                                 uint8_t ext_output_id) override {
+    VolumeControlDevice* device =
+        volume_control_devices_.FindByAddress(address);
+    if (!device) {
+      LOG(ERROR) << __func__ << ", no such device!";
+      return;
+    }
+
+    device->GetExtAudioOutDescription(ext_output_id, chrc_read_callback_static,
+                                      nullptr);
+  }
+
+  void SetExtAudioOutDescription(const RawAddress& address,
+                                 uint8_t ext_output_id,
+                                 std::string descr) override {
+    VolumeControlDevice* device =
+        volume_control_devices_.FindByAddress(address);
+    if (!device) {
+      LOG(ERROR) << __func__ << ", no such device!";
+      return;
+    }
+
+    device->SetExtAudioOutDescription(ext_output_id, descr);
   }
 
   void CleanUp() {
@@ -670,13 +996,15 @@ class VolumeControlImpl : public VolumeControl {
   int latest_operation_id_;
 
   void verify_device_ready(VolumeControlDevice* device, uint16_t handle) {
-    if (device->device_ready) return;
+    if (device->IsReady()) return;
 
     // VerifyReady sets the device_ready flag if all remaining GATT operations
     // are completed
     if (device->VerifyReady(handle)) {
       LOG(INFO) << __func__ << " Outstanding reads completed.";
 
+      callbacks_->OnDeviceAvailable(device->address,
+                                    device->audio_offsets.Size());
       callbacks_->OnConnectionState(ConnectionState::CONNECTED,
                                     device->address);
 
@@ -687,6 +1015,11 @@ class VolumeControlImpl : public VolumeControl {
       // once profile connected we can notify current states
       callbacks_->OnVolumeStateChanged(device->address, device->volume,
                                        device->mute, false);
+
+      for (auto const& offset : device->audio_offsets.volume_offsets) {
+        callbacks_->OnExtAudioOutVolumeOffsetChanged(device->address, offset.id,
+                                                     offset.offset);
+      }
 
       device->EnqueueRemainingRequests(gatt_if_, chrc_read_callback_static,
                                        OnGattWriteCccStatic);
@@ -714,6 +1047,27 @@ class VolumeControlImpl : public VolumeControl {
                                              data);
         },
         INT_TO_PTR(operation_id));
+  }
+
+  void ext_audio_out_control_point_helper(const RawAddress& address,
+                                          uint8_t ext_output_id, uint8_t opcode,
+                                          const std::vector<uint8_t>* arg) {
+    LOG(INFO) << __func__ << ": " << address.ToString()
+              << " id=" << loghex(ext_output_id) << " op=" << loghex(opcode);
+    VolumeControlDevice* device =
+        volume_control_devices_.FindByAddress(address);
+    if (!device) {
+      LOG(ERROR) << __func__ << ", no such device!";
+      return;
+    }
+    device->ExtAudioOutControlPointOperation(
+        ext_output_id, opcode, arg,
+        [](uint16_t connection_id, tGATT_STATUS status, uint16_t handle,
+           uint16_t len, const uint8_t* value, void* data) {
+          if (instance)
+            instance->OnExtAudioOutCPWrite(connection_id, status, handle, data);
+        },
+        nullptr);
   }
 
   void gattc_callback(tBTA_GATTC_EVT event, tBTA_GATTC* p_data) {
@@ -749,9 +1103,15 @@ class VolumeControlImpl : public VolumeControl {
         OnNotificationEvent(n.conn_id, n.handle, n.len, n.value);
       } break;
 
-      case BTA_GATTC_ENC_CMPL_CB_EVT:
-        OnEncryptionComplete(p_data->enc_cmpl.remote_bda, BTM_SUCCESS);
-        break;
+      case BTA_GATTC_ENC_CMPL_CB_EVT: {
+        uint8_t encryption_status;
+        if (BTM_IsEncrypted(p_data->enc_cmpl.remote_bda, BT_TRANSPORT_LE)) {
+          encryption_status = BTM_SUCCESS;
+        } else {
+          encryption_status = BTM_FAILED_ON_SECURITY;
+        }
+        OnEncryptionComplete(p_data->enc_cmpl.remote_bda, encryption_status);
+      } break;
 
       case BTA_GATTC_SRVC_CHG_EVT:
         OnServiceChangeEvent(p_data->remote_bda);
@@ -768,11 +1128,6 @@ class VolumeControlImpl : public VolumeControl {
 
   static void gattc_callback_static(tBTA_GATTC_EVT event, tBTA_GATTC* p_data) {
     if (instance) instance->gattc_callback(event, p_data);
-  }
-
-  static void enc_callback_static(const RawAddress* address, tBT_TRANSPORT,
-                                  void*, tBTM_STATUS status) {
-    if (instance) instance->OnEncryptionComplete(*address, status);
   }
 
   static void chrc_read_callback_static(uint16_t conn_id, tGATT_STATUS status,

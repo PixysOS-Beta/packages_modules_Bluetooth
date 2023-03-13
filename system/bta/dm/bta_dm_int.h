@@ -61,7 +61,7 @@
 #define BTA_SERVICE_ID_TO_SERVICE_MASK(id) (1 << (id))
 
 /* DM search events */
-enum {
+typedef enum : uint16_t {
   /* DM search API events */
   BTA_DM_API_SEARCH_EVT = BTA_SYS_EVT_START(BTA_ID_DM_SEARCH),
   BTA_DM_API_DISCOVER_EVT,
@@ -71,18 +71,31 @@ enum {
   BTA_DM_SEARCH_CMPL_EVT,
   BTA_DM_DISCOVERY_RESULT_EVT,
   BTA_DM_DISC_CLOSE_TOUT_EVT,
-  BTA_DM_API_QUEUE_SEARCH_EVT,
-  BTA_DM_API_QUEUE_DISCOVER_EVT
-};
+} tBTA_DM_EVT;
 
-/* data type for BTA_DM_API_SEARCH_EVT and BTA_DM_API_QUEUE_SEARCH_EVT */
+inline std::string bta_dm_event_text(const tBTA_DM_EVT& event) {
+  switch (event) {
+    CASE_RETURN_TEXT(BTA_DM_API_SEARCH_EVT);
+    CASE_RETURN_TEXT(BTA_DM_API_DISCOVER_EVT);
+    CASE_RETURN_TEXT(BTA_DM_INQUIRY_CMPL_EVT);
+    CASE_RETURN_TEXT(BTA_DM_REMT_NAME_EVT);
+    CASE_RETURN_TEXT(BTA_DM_SDP_RESULT_EVT);
+    CASE_RETURN_TEXT(BTA_DM_SEARCH_CMPL_EVT);
+    CASE_RETURN_TEXT(BTA_DM_DISCOVERY_RESULT_EVT);
+    CASE_RETURN_TEXT(BTA_DM_DISC_CLOSE_TOUT_EVT);
+    default:
+      return base::StringPrintf("UNKNOWN[0x%04x]", event);
+  }
+}
+
+/* data type for BTA_DM_API_SEARCH_EVT */
 typedef struct {
   BT_HDR_RIGID hdr;
   tBTA_SERVICE_MASK services;
   tBTA_DM_SEARCH_CBACK* p_cback;
 } tBTA_DM_API_SEARCH;
 
-/* data type for BTA_DM_API_DISCOVER_EVT and BTA_DM_API_QUEUE_DISCOVER_EVT */
+/* data type for BTA_DM_API_DISCOVER_EVT */
 typedef struct {
   BT_HDR_RIGID hdr;
   RawAddress bd_addr;
@@ -133,7 +146,7 @@ typedef struct {
 /* data type for BTA_DM_SDP_RESULT_EVT */
 typedef struct {
   BT_HDR_RIGID hdr;
-  uint16_t sdp_result;
+  tSDP_RESULT sdp_result;
 } tBTA_DM_SDP_RESULT;
 
 typedef struct {
@@ -310,22 +323,14 @@ extern tBTA_DM_CONNECTED_SRVCS bta_dm_conn_srvcs;
 
 /* DM control block */
 typedef struct {
-  bool is_bta_dm_active;
   tBTA_DM_ACTIVE_LINK device_list;
   tBTA_DM_SEC_CBACK* p_sec_cback;
   tBTA_BLE_ENERGY_INFO_CBACK* p_energy_info_cback;
-  uint16_t state;
   bool disabling;
   alarm_t* disable_timer;
-  uint32_t wbt_sdp_handle; /* WIDCOMM Extensions SDP record handle */
-  uint8_t wbt_scn;         /* WIDCOMM Extensions SCN */
-  uint8_t num_central_only;
   uint8_t pm_id;
   tBTA_PM_TIMER pm_timer[BTA_DM_NUM_PM_TIMER];
   uint8_t cur_av_count;   /* current AV connecions */
-  bool disable_pair_mode; /* disable pair mode or not */
-  bool conn_paired_only;  /* allow connectable to paired device only or not */
-  tBTA_DM_API_SEARCH search_msg;
 
   /* Storage for pin code request parameters */
   RawAddress pin_bd_addr;
@@ -349,7 +354,6 @@ typedef struct {
 
   tBTA_DM_ENCRYPT_CBACK* p_encrypt_cback;
   alarm_t* switch_delay_timer;
-
 } tBTA_DM_CB;
 
 /* DM search control block */
@@ -392,17 +396,27 @@ typedef struct {
 } tBTA_DM_DI_CB;
 
 /* DM search state */
-enum {
+typedef enum {
 
   BTA_DM_SEARCH_IDLE,
   BTA_DM_SEARCH_ACTIVE,
   BTA_DM_SEARCH_CANCELLING,
   BTA_DM_DISCOVER_ACTIVE
 
-};
+} tBTA_DM_STATE;
+
+inline std::string bta_dm_state_text(const tBTA_DM_STATE& state) {
+  switch (state) {
+    CASE_RETURN_TEXT(BTA_DM_SEARCH_IDLE);
+    CASE_RETURN_TEXT(BTA_DM_SEARCH_ACTIVE);
+    CASE_RETURN_TEXT(BTA_DM_SEARCH_CANCELLING);
+    CASE_RETURN_TEXT(BTA_DM_DISCOVER_ACTIVE);
+    default:
+      return base::StringPrintf("UNKNOWN[%d]", state);
+  }
+}
 
 typedef struct {
-  DEV_CLASS dev_class; /* local device class */
   uint16_t page_timeout; /* timeout for page in slots */
   bool avoid_scatter; /* true to avoid scatternet when av is streaming (be the
                          central) */
@@ -552,6 +566,10 @@ extern void bta_dm_search_cancel_notify();
 extern void bta_dm_disc_rmt_name(tBTA_DM_MSG* p_data);
 extern tBTA_DM_PEER_DEVICE* bta_dm_find_peer_device(
     const RawAddress& peer_addr);
+
+extern void bta_dm_clear_event_filter(void);
+
+extern void bta_dm_ble_reset_id(void);
 
 uint8_t bta_dm_search_get_state();
 void bta_dm_search_set_state(uint8_t state);

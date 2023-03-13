@@ -45,7 +45,9 @@ import android.os.UserHandle;
 import android.os.UserManager;
 import android.permission.PermissionCheckerManager;
 import android.permission.PermissionManager;
+import android.provider.Settings;
 import android.sysprop.BluetoothProperties;
+import android.test.mock.MockContentProvider;
 import android.test.mock.MockContentResolver;
 import android.util.Log;
 
@@ -53,14 +55,39 @@ import androidx.test.InstrumentationRegistry;
 import androidx.test.filters.MediumTest;
 import androidx.test.runner.AndroidJUnit4;
 
-import com.android.bluetooth.R;
 import com.android.bluetooth.TestUtils;
 import com.android.bluetooth.Utils;
+import com.android.bluetooth.a2dp.A2dpService;
+import com.android.bluetooth.a2dpsink.A2dpSinkService;
+import com.android.bluetooth.avrcp.AvrcpTargetService;
+import com.android.bluetooth.avrcpcontroller.AvrcpControllerService;
+import com.android.bluetooth.bas.BatteryService;
+import com.android.bluetooth.bass_client.BassClientService;
+import com.android.bluetooth.csip.CsipSetCoordinatorService;
+import com.android.bluetooth.gatt.GattService;
+import com.android.bluetooth.hap.HapClientService;
+import com.android.bluetooth.hearingaid.HearingAidService;
+import com.android.bluetooth.hfp.HeadsetService;
+import com.android.bluetooth.hfpclient.HeadsetClientService;
+import com.android.bluetooth.hid.HidDeviceService;
+import com.android.bluetooth.hid.HidHostService;
+import com.android.bluetooth.le_audio.LeAudioService;
+import com.android.bluetooth.map.BluetoothMapService;
+import com.android.bluetooth.mapclient.MapClientService;
+import com.android.bluetooth.mcp.McpService;
+import com.android.bluetooth.opp.BluetoothOppService;
+import com.android.bluetooth.pan.PanService;
+import com.android.bluetooth.pbap.BluetoothPbapService;
+import com.android.bluetooth.pbapclient.PbapClientService;
+import com.android.bluetooth.sap.SapService;
+import com.android.bluetooth.tbs.TbsService;
+import com.android.bluetooth.vc.VolumeControlService;
 import com.android.internal.app.IBatteryStats;
 
 import libcore.util.HexEncoding;
 
 import org.junit.After;
+import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -70,6 +97,8 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
+import java.io.FileDescriptor;
+import java.io.PrintWriter;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
@@ -97,7 +126,6 @@ public class AdapterServiceTest {
     private @Mock ProfileService mMockGattService;
     private @Mock ProfileService mMockService;
     private @Mock ProfileService mMockService2;
-    private @Mock ProfileService mMockService3;
     private @Mock IBluetoothCallback mIBluetoothCallback;
     private @Mock Binder mBinder;
     private @Mock AudioManager mAudioManager;
@@ -119,18 +147,47 @@ public class AdapterServiceTest {
     private final AttributionSource mAttributionSource = new AttributionSource.Builder(
             Process.myUid()).build();
 
-    private final boolean hearingAidSupported =
-            BluetoothProperties.isProfileAshaCentralEnabled().orElse(false);
-
     private PowerManager mPowerManager;
     private PermissionCheckerManager mPermissionCheckerManager;
     private PermissionManager mPermissionManager;
     private PackageManager mMockPackageManager;
     private MockContentResolver mMockContentResolver;
     private HashMap<String, HashMap<String, String>> mAdapterConfig;
+    private int mForegroundUserId;
+
+    private void configureEnabledProfiles() {
+        Log.e("AdapterServiceTest", "configureEnabledProfiles");
+        Config.setProfileEnabled(PanService.class, true);
+        Config.setProfileEnabled(BluetoothPbapService.class, true);
+        Config.setProfileEnabled(GattService.class, true);
+
+        Config.setProfileEnabled(A2dpService.class, false);
+        Config.setProfileEnabled(A2dpSinkService.class, false);
+        Config.setProfileEnabled(AvrcpTargetService.class, false);
+        Config.setProfileEnabled(AvrcpControllerService.class, false);
+        Config.setProfileEnabled(BassClientService.class, false);
+        Config.setProfileEnabled(BatteryService.class, false);
+        Config.setProfileEnabled(CsipSetCoordinatorService.class, false);
+        Config.setProfileEnabled(HapClientService.class, false);
+        Config.setProfileEnabled(HeadsetService.class, false);
+        Config.setProfileEnabled(HeadsetClientService.class, false);
+        Config.setProfileEnabled(HearingAidService.class, false);
+        Config.setProfileEnabled(HidDeviceService.class, false);
+        Config.setProfileEnabled(HidHostService.class, false);
+        Config.setProfileEnabled(LeAudioService.class, false);
+        Config.setProfileEnabled(TbsService.class, false);
+        Config.setProfileEnabled(BluetoothMapService.class, false);
+        Config.setProfileEnabled(MapClientService.class, false);
+        Config.setProfileEnabled(McpService.class, false);
+        Config.setProfileEnabled(BluetoothOppService.class, false);
+        Config.setProfileEnabled(PbapClientService.class, false);
+        Config.setProfileEnabled(SapService.class, false);
+        Config.setProfileEnabled(VolumeControlService.class, false);
+    }
 
     @BeforeClass
     public static void setupClass() {
+        Log.e("AdapterServiceTest", "setupClass");
         // Bring native layer up and down to make sure config files are properly loaded
         if (Looper.myLooper() == null) {
             Looper.prepare();
@@ -138,7 +195,7 @@ public class AdapterServiceTest {
         Assert.assertNotNull(Looper.myLooper());
         AdapterService adapterService = new AdapterService();
         adapterService.initNative(false /* is_restricted */, false /* is_common_criteria_mode */,
-                0 /* config_compare_result */, new String[0], false);
+                0 /* config_compare_result */, new String[0], false, "");
         adapterService.cleanupNative();
         HashMap<String, HashMap<String, String>> adapterConfig = TestUtils.readAdapterConfig();
         Assert.assertNotNull(adapterConfig);
@@ -148,6 +205,8 @@ public class AdapterServiceTest {
 
     @Before
     public void setUp() throws PackageManager.NameNotFoundException {
+        Log.e("AdapterServiceTest", "setUp()");
+        MockitoAnnotations.initMocks(this);
         if (Looper.myLooper() == null) {
             Looper.prepare();
         }
@@ -158,6 +217,8 @@ public class AdapterServiceTest {
         AsyncTask.setDefaultExecutor((r) -> {
             InstrumentationRegistry.getInstrumentation().runOnMainSync(r);
         });
+        InstrumentationRegistry.getInstrumentation().getUiAutomation()
+                .adoptShellPermissionIdentity();
 
         InstrumentationRegistry.getInstrumentation().runOnMainSync(
                 () -> mAdapterService = new AdapterService());
@@ -166,8 +227,14 @@ public class AdapterServiceTest {
         when(mMockPackageManager.getPermissionInfo(any(), anyInt()))
                 .thenReturn(new PermissionInfo());
 
-        mMockContentResolver = new MockContentResolver(mMockContext);
-        MockitoAnnotations.initMocks(this);
+        mMockContentResolver = new MockContentResolver(InstrumentationRegistry.getTargetContext());
+        mMockContentResolver.addProvider(Settings.AUTHORITY, new MockContentProvider() {
+            @Override
+            public Bundle call(String method, String request, Bundle args) {
+                return Bundle.EMPTY;
+            }
+        });
+
         mPowerManager = InstrumentationRegistry.getTargetContext()
                 .getSystemService(PowerManager.class);
         mPermissionCheckerManager = InstrumentationRegistry.getTargetContext()
@@ -176,6 +243,8 @@ public class AdapterServiceTest {
         mPermissionManager = InstrumentationRegistry.getTargetContext()
                 .getSystemService(PermissionManager.class);
 
+        when(mMockContext.getCacheDir()).thenReturn(InstrumentationRegistry.getTargetContext()
+                .getCacheDir());
         when(mMockContext.getApplicationInfo()).thenReturn(mMockApplicationInfo);
         when(mMockContext.getContentResolver()).thenReturn(mMockContentResolver);
         when(mMockContext.getApplicationContext()).thenReturn(mMockContext);
@@ -217,9 +286,11 @@ public class AdapterServiceTest {
             return InstrumentationRegistry.getTargetContext().getDatabasePath((String) args[0]);
         }).when(mMockContext).getDatabasePath(anyString());
 
-        when(mMockResources.getBoolean(R.bool.profile_supported_gatt)).thenReturn(true);
-        when(mMockResources.getBoolean(R.bool.profile_supported_pbap)).thenReturn(true);
-        when(mMockResources.getBoolean(R.bool.profile_supported_pan)).thenReturn(true);
+        // Sets the foreground user id to match that of the tests (restored in tearDown)
+        mForegroundUserId = Utils.getForegroundUserId();
+        int callingUid = Binder.getCallingUid();
+        UserHandle callingUser = UserHandle.getUserHandleForUid(callingUid);
+        Utils.setForegroundUserId(callingUser.getIdentifier());
 
         when(mMockDevicePolicyManager.isCommonCriteriaModeEnabled(any())).thenReturn(false);
 
@@ -231,10 +302,13 @@ public class AdapterServiceTest {
         when(mMockGattService.getName()).thenReturn("GattService");
         when(mMockService.getName()).thenReturn("Service1");
         when(mMockService2.getName()).thenReturn("Service2");
-        when(mMockService3.getName()).thenReturn("Service3");
 
         when(mMockMetricsLogger.init(any())).thenReturn(true);
         when(mMockMetricsLogger.close()).thenReturn(true);
+
+        configureEnabledProfiles();
+        Config.init(mMockContext);
+
         mAdapterService.setMetricsLogger(mMockMetricsLogger);
 
         // Attach a context to the service for permission checks.
@@ -246,17 +320,24 @@ public class AdapterServiceTest {
 
         mServiceBinder.registerCallback(mIBluetoothCallback, mAttributionSource);
 
-        Config.init(mMockContext);
-
         mAdapterConfig = TestUtils.readAdapterConfig();
         Assert.assertNotNull(mAdapterConfig);
     }
 
     @After
     public void tearDown() {
+        Log.e("AdapterServiceTest", "tearDown()");
+
+        // Restores the foregroundUserId to the ID prior to the test setup
+        Utils.setForegroundUserId(mForegroundUserId);
+
         mServiceBinder.unregisterCallback(mIBluetoothCallback, mAttributionSource);
         mAdapterService.cleanup();
-        Config.init(InstrumentationRegistry.getTargetContext());
+    }
+
+    @AfterClass
+    public static void tearDownOnce() {
+        AsyncTask.setDefaultExecutor(AsyncTask.SERIAL_EXECUTOR);
     }
 
     private void verifyStateChange(int prevState, int currState, int callNumber, int timeoutMs) {
@@ -269,14 +350,11 @@ public class AdapterServiceTest {
     }
 
     private void doEnable(int invocationNumber, boolean onlyGatt) {
+        Log.e("AdapterServiceTest", "doEnable() start");
         Assert.assertFalse(mAdapterService.getState() == BluetoothAdapter.STATE_ON);
 
         int startServiceCalls;
-        if (hearingAidSupported) {
-            startServiceCalls = 2 * (onlyGatt ? 2 : 4); // Start and stop GATT + 3
-        } else {
-            startServiceCalls = 2 * (onlyGatt ? 1 : 3); // Start and stop GATT + 2
-        }
+        startServiceCalls = 2 * (onlyGatt ? 1 : 3); // Start and stop GATT + 2
 
         mAdapterService.enable(false);
 
@@ -298,26 +376,14 @@ public class AdapterServiceTest {
                 invocationNumber + 1, CONTEXT_SWITCH_MS);
 
         if (!onlyGatt) {
-            // Start Mock PBAP, PAN and HEARING AID services
-            if (hearingAidSupported) {
-                verify(mMockContext, timeout(ONE_SECOND_MS).times(
-                    startServiceCalls * invocationNumber + 4)).startService(any());
-                mAdapterService.addProfile(mMockService3);
-                mAdapterService.onProfileServiceStateChanged(mMockService3, BluetoothAdapter.STATE_ON);
-            } else {
-                verify(mMockContext, timeout(ONE_SECOND_MS).times(
+            // Start Mock PBAP and PAN services
+            verify(mMockContext, timeout(ONE_SECOND_MS).times(
                     startServiceCalls * invocationNumber + 3)).startService(any());
-            }
 
             mAdapterService.addProfile(mMockService);
             mAdapterService.addProfile(mMockService2);
             mAdapterService.onProfileServiceStateChanged(mMockService, BluetoothAdapter.STATE_ON);
             mAdapterService.onProfileServiceStateChanged(mMockService2, BluetoothAdapter.STATE_ON);
-        } else if (hearingAidSupported) {
-            verify(mMockContext, timeout(ONE_SECOND_MS).times(
-                startServiceCalls * invocationNumber + 2)).startService(any());
-            mAdapterService.addProfile(mMockService3);
-            mAdapterService.onProfileServiceStateChanged(mMockService3, BluetoothAdapter.STATE_ON);
         }
 
         verifyStateChange(BluetoothAdapter.STATE_TURNING_ON, BluetoothAdapter.STATE_ON,
@@ -330,17 +396,15 @@ public class AdapterServiceTest {
         Assert.assertTrue(scanMode == BluetoothAdapter.SCAN_MODE_CONNECTABLE
                 || scanMode == BluetoothAdapter.SCAN_MODE_CONNECTABLE_DISCOVERABLE);
         Assert.assertTrue(mAdapterService.getState() == BluetoothAdapter.STATE_ON);
+
+        Log.e("AdapterServiceTest", "doEnable() complete success");
     }
 
     private void doDisable(int invocationNumber, boolean onlyGatt) {
         Assert.assertTrue(mAdapterService.getState() == BluetoothAdapter.STATE_ON);
 
         int startServiceCalls;
-        if (hearingAidSupported) {
-            startServiceCalls = 2 * (onlyGatt ? 2 : 4); // Start and stop GATT + 3
-        } else {
-            startServiceCalls = 2 * (onlyGatt ? 1 : 3); // Start and stop GATT + 2
-        }
+        startServiceCalls = 2 * (onlyGatt ? 1 : 3); // Start and stop GATT + 2
 
         mAdapterService.disable();
 
@@ -348,22 +412,12 @@ public class AdapterServiceTest {
                 invocationNumber + 1, CONTEXT_SWITCH_MS);
 
         if (!onlyGatt) {
-            // Stop PBAP, PAN and HEARING AID services
-            if (hearingAidSupported) {
-                verify(mMockContext, timeout(ONE_SECOND_MS).times(
-                    startServiceCalls * invocationNumber + 7)).startService(any());
-                mAdapterService.onProfileServiceStateChanged(mMockService3, BluetoothAdapter.STATE_OFF);
-            } else {
-                verify(mMockContext, timeout(ONE_SECOND_MS).times(
+            // Stop PBAP and PAN services
+            verify(mMockContext, timeout(ONE_SECOND_MS).times(
                     startServiceCalls * invocationNumber + 5)).startService(any());
-            }
 
             mAdapterService.onProfileServiceStateChanged(mMockService, BluetoothAdapter.STATE_OFF);
             mAdapterService.onProfileServiceStateChanged(mMockService2, BluetoothAdapter.STATE_OFF);
-        } else if (hearingAidSupported) {
-            verify(mMockContext, timeout(ONE_SECOND_MS).times(
-                    startServiceCalls * invocationNumber + 3)).startService(any());
-            mAdapterService.onProfileServiceStateChanged(mMockService3, BluetoothAdapter.STATE_OFF);
         }
 
         verifyStateChange(BluetoothAdapter.STATE_TURNING_OFF, BluetoothAdapter.STATE_BLE_ON,
@@ -389,9 +443,12 @@ public class AdapterServiceTest {
      * Test: Turn Bluetooth on.
      * Check whether the AdapterService gets started.
      */
+    @Ignore("b/228874625")
     @Test
     public void testEnable() {
+        Log.e("AdapterServiceTest", "testEnable() start");
         doEnable(0, false);
+        Log.e("AdapterServiceTest", "testEnable() end");
     }
 
     /**
@@ -429,7 +486,9 @@ public class AdapterServiceTest {
         when(mockContext.getSystemServiceName(AlarmManager.class))
                 .thenReturn(Context.ALARM_SERVICE);
 
-        when(mockResources.getBoolean(R.bool.profile_supported_gatt)).thenReturn(true);
+        // Config is set to PBAP, PAN and GATT by default. Turn off PAN and PBAP.
+        Config.setProfileEnabled(PanService.class, false);
+        Config.setProfileEnabled(BluetoothPbapService.class, false);
 
         Config.init(mockContext);
         doEnable(0, true);
@@ -481,13 +540,8 @@ public class AdapterServiceTest {
         verifyStateChange(BluetoothAdapter.STATE_ON, BluetoothAdapter.STATE_TURNING_OFF, 1,
                 CONTEXT_SWITCH_MS);
 
-        // Stop PBAP, PAN and HEARING AID services
-        if (hearingAidSupported) {
-            verify(mMockContext, timeout(ONE_SECOND_MS).times(7)).startService(any());
-            mAdapterService.onProfileServiceStateChanged(mMockService3, BluetoothAdapter.STATE_OFF);
-        } else {
-            verify(mMockContext, timeout(ONE_SECOND_MS).times(5)).startService(any());
-        }
+        // Stop PBAP and PAN services
+        verify(mMockContext, timeout(ONE_SECOND_MS).times(5)).startService(any());
         mAdapterService.onProfileServiceStateChanged(mMockService, BluetoothAdapter.STATE_OFF);
         mAdapterService.onProfileServiceStateChanged(mMockService2, BluetoothAdapter.STATE_OFF);
 
@@ -500,11 +554,7 @@ public class AdapterServiceTest {
                 CONTEXT_SWITCH_MS);
 
         // Stop GATT
-        if (hearingAidSupported) {
-            verify(mMockContext, timeout(ONE_SECOND_MS).times(8)).startService(any());
-        } else {
-            verify(mMockContext, timeout(ONE_SECOND_MS).times(6)).startService(any());
-        }
+        verify(mMockContext, timeout(ONE_SECOND_MS).times(6)).startService(any());
 
         verifyStateChange(BluetoothAdapter.STATE_BLE_TURNING_OFF, BluetoothAdapter.STATE_OFF, 1,
                 AdapterState.BLE_STOP_TIMEOUT_DELAY + NATIVE_DISABLE_MS);
@@ -538,14 +588,8 @@ public class AdapterServiceTest {
         verifyStateChange(BluetoothAdapter.STATE_BLE_ON, BluetoothAdapter.STATE_TURNING_ON, 1,
                 CONTEXT_SWITCH_MS);
 
-        // Register Mock PBAP, PAN and HEARING AID services, only start two
-        if (hearingAidSupported) {
-            verify(mMockContext, timeout(ONE_SECOND_MS).times(4)).startService(any());
-            mAdapterService.addProfile(mMockService3);
-            mAdapterService.onProfileServiceStateChanged(mMockService3, BluetoothAdapter.STATE_ON);
-        } else {
-            verify(mMockContext, timeout(ONE_SECOND_MS).times(3)).startService(any());
-        }
+        // Register Mock PBAP and PAN services
+        verify(mMockContext, timeout(ONE_SECOND_MS).times(3)).startService(any());
         mAdapterService.addProfile(mMockService);
         mAdapterService.addProfile(mMockService2);
         mAdapterService.onProfileServiceStateChanged(mMockService, BluetoothAdapter.STATE_ON);
@@ -553,13 +597,8 @@ public class AdapterServiceTest {
         verifyStateChange(BluetoothAdapter.STATE_TURNING_ON, BluetoothAdapter.STATE_TURNING_OFF, 1,
                 AdapterState.BREDR_START_TIMEOUT_DELAY + CONTEXT_SWITCH_MS);
 
-        // Stop PBAP, PAN and HEARING AID services
-        if (hearingAidSupported) {
-            verify(mMockContext, timeout(ONE_SECOND_MS).times(7)).startService(any());
-            mAdapterService.onProfileServiceStateChanged(mMockService3, BluetoothAdapter.STATE_OFF);
-        } else {
-            verify(mMockContext, timeout(ONE_SECOND_MS).times(5)).startService(any());
-        }
+        // Stop PBAP and PAN services
+        verify(mMockContext, timeout(ONE_SECOND_MS).times(5)).startService(any());
         mAdapterService.onProfileServiceStateChanged(mMockService, BluetoothAdapter.STATE_OFF);
 
         verifyStateChange(BluetoothAdapter.STATE_TURNING_OFF, BluetoothAdapter.STATE_BLE_ON, 1,
@@ -581,12 +620,8 @@ public class AdapterServiceTest {
         verifyStateChange(BluetoothAdapter.STATE_ON, BluetoothAdapter.STATE_TURNING_OFF, 1,
                 CONTEXT_SWITCH_MS);
 
-        // Stop PBAP, PAN and HEARING AID services
-        if (hearingAidSupported) {
-            verify(mMockContext, timeout(ONE_SECOND_MS).times(7)).startService(any());
-        } else {
-            verify(mMockContext, timeout(ONE_SECOND_MS).times(5)).startService(any());
-        }
+        // Stop PBAP and PAN services
+        verify(mMockContext, timeout(ONE_SECOND_MS).times(5)).startService(any());
         mAdapterService.onProfileServiceStateChanged(mMockService, BluetoothAdapter.STATE_OFF);
 
         verifyStateChange(BluetoothAdapter.STATE_TURNING_OFF,
@@ -594,11 +629,7 @@ public class AdapterServiceTest {
                 AdapterState.BREDR_STOP_TIMEOUT_DELAY + CONTEXT_SWITCH_MS);
 
         // Stop GATT
-        if (hearingAidSupported) {
-            verify(mMockContext, timeout(ONE_SECOND_MS).times(8)).startService(any());
-        } else {
-            verify(mMockContext, timeout(ONE_SECOND_MS).times(6)).startService(any());
-        }
+        verify(mMockContext, timeout(ONE_SECOND_MS).times(6)).startService(any());
         mAdapterService.onProfileServiceStateChanged(mMockGattService, BluetoothAdapter.STATE_OFF);
 
         verifyStateChange(BluetoothAdapter.STATE_BLE_TURNING_OFF, BluetoothAdapter.STATE_OFF, 1,
@@ -632,13 +663,8 @@ public class AdapterServiceTest {
         verifyStateChange(BluetoothAdapter.STATE_ON, BluetoothAdapter.STATE_TURNING_OFF, 1,
                 CONTEXT_SWITCH_MS);
 
-        // Stop PBAP, PAN and HEARING AID services
-        if (hearingAidSupported) {
-            verify(mMockContext, timeout(ONE_SECOND_MS).times(7)).startService(any());
-            mAdapterService.onProfileServiceStateChanged(mMockService3, BluetoothAdapter.STATE_OFF);
-        } else {
-            verify(mMockContext, timeout(ONE_SECOND_MS).times(5)).startService(any());
-        }
+        // Stop PBAP and PAN services
+        verify(mMockContext, timeout(ONE_SECOND_MS).times(5)).startService(any());
         mAdapterService.onProfileServiceStateChanged(mMockService, BluetoothAdapter.STATE_OFF);
         mAdapterService.onProfileServiceStateChanged(mMockService2, BluetoothAdapter.STATE_OFF);
 
@@ -651,11 +677,7 @@ public class AdapterServiceTest {
                 CONTEXT_SWITCH_MS);
 
         // Stop GATT
-        if (hearingAidSupported) {
-            verify(mMockContext, timeout(ONE_SECOND_MS).times(8)).startService(any());
-        } else {
-            verify(mMockContext, timeout(ONE_SECOND_MS).times(6)).startService(any());
-        }
+        verify(mMockContext, timeout(ONE_SECOND_MS).times(6)).startService(any());
 
         mAdapterService.onProfileServiceStateChanged(mMockGattService, BluetoothAdapter.STATE_OFF);
 
@@ -974,5 +996,16 @@ public class AdapterServiceTest {
         Assert.assertFalse(mAdapterService.getState() == BluetoothAdapter.STATE_ON);
         int id2 = mAdapterService.getMetricId(device);
         Assert.assertEquals(id2, id1);
+    }
+
+    @Test
+    public void testDump_doesNotCrash() {
+        FileDescriptor fd = new FileDescriptor();
+        PrintWriter writer = mock(PrintWriter.class);
+
+        mAdapterService.dump(fd, writer, new String[]{});
+        mAdapterService.dump(fd, writer, new String[]{"set-test-mode", "enabled"});
+        mAdapterService.dump(fd, writer, new String[]{"--proto-bin"});
+        mAdapterService.dump(fd, writer, new String[]{"random", "arguments"});
     }
 }

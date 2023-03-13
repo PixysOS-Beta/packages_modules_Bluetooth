@@ -26,12 +26,11 @@ namespace hidl {
 namespace le_audio {
 
 using ::android::hardware::bluetooth::audio::V2_1::PcmParameters;
-using ::android::hardware::bluetooth::audio::V2_2::LeAudioConfiguration;
-using ::android::hardware::bluetooth::audio::V2_2::UnicastCapability;
-using ::bluetooth::audio::hidl::AudioConfiguration_2_2;
 using ::bluetooth::audio::hidl::BluetoothAudioCtrlAck;
 using ::le_audio::set_configurations::AudioSetConfiguration;
 using ::le_audio::set_configurations::CodecCapabilitySetting;
+
+using ::bluetooth::audio::le_audio::StartRequestState;
 
 constexpr uint8_t kChannelNumberMono = 1;
 constexpr uint8_t kChannelNumberStereo = 2;
@@ -51,15 +50,9 @@ using ::bluetooth::audio::le_audio::StreamCallbacks;
 
 void flush_sink();
 void flush_source();
-bool halConfigToCodecCapabilitySetting(UnicastCapability halConfig,
-                                       CodecCapabilitySetting& codecCapability);
 
 bool is_source_hal_enabled();
 bool is_sink_hal_enabled();
-AudioConfiguration_2_2 offload_config_to_hal_audio_config(
-    const ::le_audio::offload_config& offload_config);
-
-std::vector<AudioSetConfiguration> get_offload_capabilities();
 
 class LeAudioTransport {
  public:
@@ -78,8 +71,6 @@ class LeAudioTransport {
 
   void MetadataChanged(const source_metadata_t& source_metadata);
 
-  void SinkMetadataChanged(const sink_metadata_t& sink_metadata);
-
   void ResetPresentationPosition();
 
   void LogBytesProcessed(size_t bytes_processed);
@@ -92,8 +83,9 @@ class LeAudioTransport {
                                       uint8_t channels_count,
                                       uint32_t data_interval);
 
-  bool IsPendingStartStream(void);
-  void ClearPendingStartStream(void);
+  StartRequestState GetStartRequestState(void);
+  void ClearStartRequestState(void);
+  void SetStartRequestState(StartRequestState state);
 
  private:
   void (*flush_)(void);
@@ -102,7 +94,7 @@ class LeAudioTransport {
   uint64_t total_bytes_processed_;
   timespec data_position_;
   PcmParameters pcm_config_;
-  bool is_pending_start_request_;
+  std::atomic<StartRequestState> start_request_state_;
 };
 
 // Sink transport implementation for Le Audio
@@ -125,8 +117,6 @@ class LeAudioSinkTransport
 
   void MetadataChanged(const source_metadata_t& source_metadata) override;
 
-  void SinkMetadataChanged(const sink_metadata_t& sink_metadata) override;
-
   void ResetPresentationPosition() override;
 
   void LogBytesRead(size_t bytes_read) override;
@@ -139,8 +129,9 @@ class LeAudioSinkTransport
                                       uint8_t channels_count,
                                       uint32_t data_interval);
 
-  bool IsPendingStartStream(void);
-  void ClearPendingStartStream(void);
+  StartRequestState GetStartRequestState(void);
+  void ClearStartRequestState(void);
+  void SetStartRequestState(StartRequestState state);
 
   static inline LeAudioSinkTransport* instance = nullptr;
   static inline BluetoothAudioSinkClientInterface* interface = nullptr;
@@ -169,8 +160,6 @@ class LeAudioSourceTransport
 
   void MetadataChanged(const source_metadata_t& source_metadata) override;
 
-  void SinkMetadataChanged(const sink_metadata_t& sink_metadata) override;
-
   void ResetPresentationPosition() override;
 
   void LogBytesWritten(size_t bytes_written) override;
@@ -183,8 +172,9 @@ class LeAudioSourceTransport
                                       uint8_t channels_count,
                                       uint32_t data_interval);
 
-  bool IsPendingStartStream(void);
-  void ClearPendingStartStream(void);
+  StartRequestState GetStartRequestState(void);
+  void ClearStartRequestState(void);
+  void SetStartRequestState(StartRequestState state);
 
   static inline LeAudioSourceTransport* instance = nullptr;
   static inline BluetoothAudioSourceClientInterface* interface = nullptr;

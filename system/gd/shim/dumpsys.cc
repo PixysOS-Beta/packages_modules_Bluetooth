@@ -102,7 +102,9 @@ std::string Dumpsys::impl::PrintAsJson(std::string* dumpsys_data) const {
     return std::string(buf);
   }
 
-  flatbuffers::Parser parser;
+  flatbuffers::IDLOptions options{};
+  options.output_default_scalars_in_json = true;
+  flatbuffers::Parser parser{options};
   if (!parser.Deserialize(schema)) {
     char buf[255];
     snprintf(buf, sizeof(buf), "ERROR: Unable to deserialize bundle root name:%s\n", root_name.c_str());
@@ -123,13 +125,8 @@ void Dumpsys::impl::DumpWithArgsAsync(int fd, const char** args) {
   std::string dumpsys_data;
   dumper.DumpState(&dumpsys_data);
 
-  if (parsed_dumpsys_args.IsDeveloper() || IsDebuggable()) {
-    dprintf(fd, " ----- Filtering as Developer -----\n");
-    FilterAsDeveloper(&dumpsys_data);
-  } else {
-    dprintf(fd, " ----- Filtering as User -----\n");
-    FilterAsUser(&dumpsys_data);
-  }
+  dprintf(fd, " ----- Filtering as Developer -----\n");
+  FilterAsDeveloper(&dumpsys_data);
 
   dprintf(fd, "%s", PrintAsJson(&dumpsys_data).c_str());
 }
@@ -179,22 +176,10 @@ void Dumpsys::Stop() {
 
 DumpsysDataFinisher Dumpsys::GetDumpsysData(flatbuffers::FlatBufferBuilder* fb_builder) const {
   auto name = fb_builder->CreateString("----- Shim Dumpsys -----");
-  auto example_piecemeal_string = fb_builder->CreateString("Example Piecemeal String");
-  auto example_instant_string = fb_builder->CreateString("Example Instant String");
-
-  ExamplePiecemealTableBuilder example_piecemeal_table_builder(*fb_builder);
-  example_piecemeal_table_builder.add_example_string(example_piecemeal_string);
-  example_piecemeal_table_builder.add_example_int(123);
-  example_piecemeal_table_builder.add_example_float(1.23);
-  auto example_piecemeal_table = example_piecemeal_table_builder.Finish();
-
-  auto example_instant_table = CreateExampleInstantTable(*fb_builder, example_instant_string, 246, 2.46);
 
   DumpsysModuleDataBuilder builder(*fb_builder);
   builder.add_title(name);
   builder.add_number_of_bundled_schemas(pimpl_->GetNumberOfBundledSchemas());
-  builder.add_example_piecemeal_table(example_piecemeal_table);
-  builder.add_example_instant_table(example_instant_table);
   auto dumpsys_data = builder.Finish();
 
   return [dumpsys_data](DumpsysDataBuilder* builder) { builder->add_shim_dumpsys_data(dumpsys_data); };

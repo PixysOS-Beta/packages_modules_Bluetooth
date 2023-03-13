@@ -32,6 +32,7 @@ import android.os.BatteryManager;
 import android.os.Bundle;
 import android.os.HandlerThread;
 import android.os.Message;
+import android.sysprop.BluetoothProperties;
 import android.util.Log;
 
 import com.android.bluetooth.Utils;
@@ -80,6 +81,10 @@ public class HeadsetClientService extends ProfileService {
     private final Object mStartStopLock = new Object();
 
     public static final String HFP_CLIENT_STOP_TAG = "hfp_client_stop_tag";
+
+    public static boolean isEnabled() {
+        return BluetoothProperties.isProfileHfpHfEnabled().orElse(false);
+    }
 
     @Override
     public IProfileServiceBinder initBinder() {
@@ -254,7 +259,8 @@ public class HeadsetClientService extends ProfileService {
     /**
      * Handlers for incoming service calls
      */
-    private static class BluetoothHeadsetClientBinder extends IBluetoothHeadsetClient.Stub
+    @VisibleForTesting
+    static class BluetoothHeadsetClientBinder extends IBluetoothHeadsetClient.Stub
             implements IProfileServiceBinder {
         private HeadsetClientService mService;
 
@@ -269,8 +275,11 @@ public class HeadsetClientService extends ProfileService {
 
         @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
         private HeadsetClientService getService(AttributionSource source) {
-            if (!Utils.checkCallerIsSystemOrActiveUser(TAG)
-                    || !Utils.checkServiceAvailable(mService, TAG)
+            if (Utils.isInstrumentationTestMode()) {
+                return mService;
+            }
+            if (!Utils.checkServiceAvailable(mService, TAG)
+                    || !Utils.checkCallerIsSystemOrActiveOrManagedUser(mService, TAG)
                     || !Utils.checkConnectPermissionForDataDelivery(mService, source, TAG)) {
                 return null;
             }
@@ -769,7 +778,7 @@ public class HeadsetClientService extends ProfileService {
         return connectedDevices;
     }
 
-    private List<BluetoothDevice> getDevicesMatchingConnectionStates(int[] states) {
+    List<BluetoothDevice> getDevicesMatchingConnectionStates(int[] states) {
         List<BluetoothDevice> devices = new ArrayList<BluetoothDevice>();
         synchronized (mStateMachineMap) {
             for (BluetoothDevice bd : mStateMachineMap.keySet()) {
@@ -897,6 +906,8 @@ public class HeadsetClientService extends ProfileService {
 
     public void setAudioRouteAllowed(BluetoothDevice device, boolean allowed) {
         enforceCallingOrSelfPermission(BLUETOOTH_PERM, "Need BLUETOOTH permission");
+        Log.i(TAG, "setAudioRouteAllowed: device=" + device + ", allowed=" + allowed + ", "
+                + Utils.getUidPidString());
         HeadsetClientStateMachine sm = mStateMachineMap.get(device);
         if (sm != null) {
             sm.setAudioRouteAllowed(allowed);
@@ -913,6 +924,7 @@ public class HeadsetClientService extends ProfileService {
     }
 
     public boolean connectAudio(BluetoothDevice device) {
+        Log.i(TAG, "connectAudio: device=" + device + ", " + Utils.getUidPidString());
         HeadsetClientStateMachine sm = getStateMachine(device);
         if (sm == null) {
             Log.e(TAG, "SM does not exist for device " + device);

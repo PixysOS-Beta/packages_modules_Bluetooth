@@ -295,6 +295,7 @@ static void reassemble_and_dispatch_iso(UNUSED_ATTR BT_HDR* packet) {
           ((boundary_flag == HCI_ISO_BF_FIRST_FRAGMENTED_PACKET) &&
            (iso_full_len <= packet->len))) {
         LOG_ERROR("%s corrupted ISO frame", __func__);
+        buffer_allocator->free(packet);
         return;
       }
 
@@ -411,7 +412,6 @@ static void reassemble_and_dispatch(BT_HDR* packet) {
 
     if (broadcast_flag != POINT_TO_POINT) {
       LOG_WARN("dropping broadcast packet");
-      android_errorWriteLog(0x534e4554, "169327567");
       buffer_allocator->free(packet);
       return;
     }

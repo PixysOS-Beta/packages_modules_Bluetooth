@@ -24,9 +24,14 @@
 #include "common/circular_buffer.h"
 #include "hal/hci_hal.h"
 #include "module.h"
+#include "os/repeating_alarm.h"
 
 namespace bluetooth {
 namespace hal {
+
+#ifdef USE_FAKE_TIMERS
+static uint64_t file_creation_time;
+#endif
 
 class SnoopLogger : public ::bluetooth::Module {
  public:
@@ -35,11 +40,13 @@ class SnoopLogger : public ::bluetooth::Module {
   static const std::string kBtSnoopLogModeDisabled;
   static const std::string kBtSnoopLogModeFiltered;
   static const std::string kBtSnoopLogModeFull;
+  static const std::string kSoCManufacturerQualcomm;
 
   static const std::string kBtSnoopMaxPacketsPerFileProperty;
   static const std::string kIsDebuggableProperty;
   static const std::string kBtSnoopLogModeProperty;
   static const std::string kBtSnoopDefaultLogModeProperty;
+  static const std::string kSoCManufacturerProperty;
 
   // Put in header for test
   struct PacketHeaderType {
@@ -62,9 +69,15 @@ class SnoopLogger : public ::bluetooth::Module {
   // Changes to this value is only effective after restarting Bluetooth
   static size_t GetMaxPacketsPerFile();
 
+  static size_t GetMaxPacketsPerBuffer();
+
   // Get snoop logger mode based on current system setup
   // Changes to this values is only effective after restarting Bluetooth
   static std::string GetBtSnoopMode();
+
+  // Returns whether the soc manufacturer is Qualcomm
+  // Changes to this value is only effective after restarting Bluetooth
+  static bool IsQualcommDebugLogEnabled();
 
   // Has to be defined from 1 to 4 per btsnoop format
   enum PacketType {
@@ -96,7 +109,11 @@ class SnoopLogger : public ::bluetooth::Module {
       std::string snoop_log_path,
       std::string snooz_log_path,
       size_t max_packets_per_file,
-      const std::string& btsnoop_mode);
+      size_t max_packets_per_buffer,
+      const std::string& btsnoop_mode,
+      bool qualcomm_debug_log_enabled,
+      const std::chrono::milliseconds snooz_log_life_time,
+      const std::chrono::milliseconds snooz_log_delete_alarm_interval);
   void CloseCurrentSnoopLogFile();
   void OpenNextSnoopLogFile();
   void DumpSnoozLogToFile(const std::vector<std::string>& data) const;
@@ -109,8 +126,12 @@ class SnoopLogger : public ::bluetooth::Module {
   bool is_filtered_ = false;
   size_t max_packets_per_file_;
   common::CircularBuffer<std::string> btsnooz_buffer_;
+  bool qualcomm_debug_log_enabled_ = false;
   size_t packet_counter_ = 0;
   mutable std::recursive_mutex file_mutex_;
+  std::unique_ptr<os::RepeatingAlarm> alarm_;
+  std::chrono::milliseconds snooz_log_life_time_;
+  std::chrono::milliseconds snooz_log_delete_alarm_interval_;
 };
 
 }  // namespace hal

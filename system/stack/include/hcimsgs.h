@@ -65,167 +65,9 @@ struct Interface {
   void (*StartInquiry)(const LAP inq_lap, uint8_t duration,
                        uint8_t response_cnt);
   void (*InquiryCancel)();
-  void (*StartPeriodicInquiryMode)(uint16_t max_period, uint16_t min_period,
-                                   const LAP inq_lap, uint8_t duration,
-                                   uint8_t response_cnt);
-  void (*ExitPeriodicInquiryMode)();
-  void (*CreateConnection)(const RawAddress& dest, uint16_t packet_types,
-                           uint8_t page_scan_rep_mode, uint8_t page_scan_mode,
-                           uint16_t clock_offset, uint8_t allow_switch);
   void (*Disconnect)(uint16_t handle, uint8_t reason);
-  // UNUSED 0x0407 btsnd_hcic_add_SCO_conn
-  void (*CreateConnectionCancel)(const RawAddress& dest);
-  void (*AcceptConnectionRequest)(const RawAddress& dest, uint8_t role);
-  void (*RejectConnectionRequest)(const RawAddress& dest, uint8_t reason);
-  void (*LinkKeyRequestReply)(const RawAddress& bd_addr,
-                              const LinkKey& link_key);
-  void (*LinkKeyRequestNegativeReply)(const RawAddress& bd_addr);
-  void (*PinCodeRequestReply)(const RawAddress& bd_addr, uint8_t pin_code_len,
-                              PIN_CODE pin_code);
-  void (*PinCodeRequestNegativeReply)(const RawAddress& bd_addr);
   void (*ChangeConnectionPacketType)(uint16_t handle, uint16_t packet_types);
-  void (*AuthenticationRequested)(uint16_t handle);
-  void (*SetConnectionEncryption)(uint16_t handle, bool enable);
-  void (*ChangeConnectionLinkKey)();  // 0x0415,
-  // UNUSED 0x0416
-  void (*CentralLinkKey)();  // 0x0417,
-  void (*RemoteNameRequest)(const RawAddress& bd_addr,
-                            uint8_t page_scan_rep_mode, uint8_t page_scan_mode,
-                            uint16_t clock_offset);
-  void (*RemoteNameRequestCancel)(const RawAddress& bd_addr);
-  void (*ReadRemoteSupportedFeatures)(uint16_t handle);
-  void (*ReadRemoteExtendedFeatures)(uint16_t handle, uint8_t page_num);
-  void (*ReadRemoteVersionInformation)(uint16_t handle);
-  void (*ReadClockOffset)(uint16_t handle);
-  void (*ReadLmpHandle)(uint16_t handle);
-  void (*SetupSynchronousConnection)(uint16_t handle,
-                                     uint32_t transmit_bandwidth,
-                                     uint32_t receive_bandwidth,
-                                     uint16_t max_latency, uint16_t voice,
-                                     uint8_t retrans_effort,
-                                     uint16_t packet_types);
-  void (*AcceptSynchronousConnection)(
-      const RawAddress& bd_addr, uint32_t transmit_bandwidth,
-      uint32_t receive_bandwidth, uint16_t max_latency, uint16_t content_fmt,
-      uint8_t retrans_effort, uint16_t packet_types);
-  void (*RejectSynchronousConnection)(const RawAddress& bd_addr,
-                                      uint8_t reason);
-  void (*IoCapabilityRequestReply)(const RawAddress& bd_addr,
-                                   uint8_t capability, uint8_t oob_present,
-                                   uint8_t auth_req);
-  void (*UserConfirmationRequestReply)(const RawAddress& bd_addr, bool is_yes);
-  void (*UserConfirmationRequestNegativeReply)(const RawAddress& bd_addr,
-                                               bool is_yes);
-  void (*UserPasskeyRequestReply)(const RawAddress& bd_addr, uint32_t value);
-  void (*UserPasskeyRequestNegativeReply)(const RawAddress& bd_addr);
-  void (*RemoteOobDataRequestReply)(const RawAddress& bd_addr, const Octet16& c,
-                                    const Octet16& r);
-  void (*RemoteOobDataRequestNegativeReply)(const RawAddress& bd_addr);
-  void (*IoCapabilityRequestNegativeReply)(const RawAddress& bd_addr,
-                                           uint8_t err_code);
-  void (*EnhancedSetupSynchronousConnection)(uint16_t conn_handle,
-                                             enh_esco_params_t* p_params);
-  void (*EnhancedAcceptSynchronousConnection)(const RawAddress& bd_addr,
-                                              enh_esco_params_t* p_params);
-  void (*RemoteOobExtendedDataRequestReply)();
-
-  // LINK_POLICY 0x08xx
-  void (*HoldMode)(uint16_t handle, uint16_t max_hold_period,
-                   uint16_t min_hold_period);
-  void (*SniffMode)(uint16_t handle, uint16_t max_sniff_period,
-                    uint16_t min_sniff_period, uint16_t sniff_attempt,
-                    uint16_t sniff_timeout);
-  void (*ExitSniffMode)(uint16_t handle);
-  void (*QosSetup)(uint16_t handle, uint8_t flags, uint8_t service_type,
-                   uint32_t token_rate, uint32_t peak, uint32_t latency,
-                   uint32_t delay_var);
-  // UNUSED 0x0808
-  void (*RoleDiscovery)();
   void (*StartRoleSwitch)(const RawAddress& bd_addr, uint8_t role);
-  void (*ReadLinkPolicySettings)();
-  void (*WriteLinkPolicySettings)(uint16_t handle, uint16_t settings);
-  void (*ReadDefaultLinkPolicySettings)();
-  void (*WriteDefaultLinkPolicySettings)(uint16_t settings);
-  void (*FlowSpecification)();
-  void (*SniffSubrating)(uint16_t handle, uint16_t max_lat,
-                         uint16_t min_remote_lat, uint16_t min_local_lat);
-
-  // CONTROLLER_AND_BASEBAND 0x0Cxx
-  void (*SetEventMask)();
-  void (*Reset)();
-  void (*SetEventFilter)(uint8_t filt_type, uint8_t filt_cond_type,
-                         uint8_t* filt_cond, uint8_t filt_cond_len);
-  void (*Flush)();
-  void (*ReadPinType)();
-  void (*WritePinType)(uint8_t type);
-  void (*CreateNewUnitKey)();
-  void (*ReadStoredLinkKey)();
-  void (*WriteStoredLinkKey)();
-  void (*DeleteStoredLinkKey)(const RawAddress& bd_addr, bool delete_all_flag);
-  void (*WriteLocalName)(BD_NAME name);
-  void (*ReadLocalName)();
-  void (*ReadConnectionAcceptTimeout)();
-  void (*WriteConnectionAcceptTimeout)(uint16_t timeout);
-  void (*ReadPageTimeout)();
-  void (*WritePageTimeout)();
-  void (*ReadScanEnable)();
-  void (*WriteScanEnable)(uint8_t flag);
-  void (*ReadPageScanActivity)();
-  void (*WritePageScanActivity)(uint16_t interval, uint16_t window);
-  void (*ReadInquiryScanActivity)();
-  void (*WriteInquiryScanActivity)(uint16_t interval, uint16_t window);
-  void (*ReadAuthenticationEnable)();
-  void (*WriteAuthenticationEnable)(uint8_t flag);
-  void (*ReadClassOfDevice)();
-  void (*WriteClassOfDevice)(DEV_CLASS dev_class);
-  void (*ReadVoiceSetting)();
-  void (*WriteVoiceSetting)(uint16_t flags);
-  void (*ReadAutomaticFlushTimeout)(uint16_t handle);
-  void (*WriteAutomaticFlushTimeout)(uint16_t handle, uint16_t tout);
-  void (*ReadNumBroadcastRetransmits)();
-  void (*WriteNumBroadcastRetransmits)();
-  void (*ReadHoldModeActivity)();
-  void (*WriteHoldModeActivity)();
-  void (*ReadTransmitPowerLevel)(uint16_t handle, uint8_t type);
-  void (*ReadSynchronousFlowControlEnable)();
-  void (*WriteSynchronousFlowControlEnable)();
-  void (*SetControllerToHostFlowControl)();
-  void (*HostBufferSize)();
-  void (*HostNumCompletedPackets)();
-  void (*ReadLinkSupervisionTimeout)(uint16_t handle, uint16_t timeout);
-  void (*WriteLinkSupervisionTimeout)();
-  void (*ReadNumberOfSupportedIac)();
-  void (*ReadCurrentIacLap)();
-  void (*WriteCurrentIacLap)(uint8_t num_cur_iac, LAP* const iac_lap);
-  void (*SetAfhHostChannelClassification)();
-  void (*ReadInquiryScanType)();
-  void (*WriteInquiryScanType)(uint8_t type);
-  void (*ReadInquiryMode)();  // 0x0C44,
-  void (*WriteInquiryMode)(uint8_t mode);
-  void (*ReadPageScanType)();  // 0x0C46,
-  void (*WritePageScanType)(uint8_t type);
-  void (*ReadAfhChannelAssessmentMode)();
-  void (*WriteAfhChannelAssessmentMode)();
-  void (*ReadExtendedInquiryResponse)();
-  void (*WriteExtendedInquiryResponse)(void* buffer, uint8_t fec_req);
-  void (*RefreshEncryptionKey)();
-  void (*ReadSimplePairingMode)();
-  void (*WriteSimplePairingMode)();
-  void (*ReadLocalOobData)();
-  void (*ReadInquiryResponseTransmitPowerLevel)();
-  void (*WriteInquiryTransmitPowerLevel)();
-  void (*EnhancedFlush)(uint16_t handle, uint8_t packet_type);
-  void (*SendKeypressNotification)(const RawAddress& bd_addr, uint8_t notif);
-
-  // STATUS_PARAMETER 0x14xxS
-  void (*ReadFailedContactCounter)(uint16_t handle);
-  void (*ResetFailedContactCounter)();
-  void (*ReadLinkQuality)(uint16_t handle);
-  // UNUSED 0x1404
-  void (*ReadRssi)(uint16_t handle);
-  void (*ReadAfhChannelMap)();
-  void (*ReadClock)();
-  void (*ReadEncryptionKeySize)();
 };
 
 const Interface& GetInterface();
@@ -585,10 +427,6 @@ extern void btsnd_hcic_ble_read_chnl_map(uint16_t handle);
 
 extern void btsnd_hcic_ble_read_remote_feat(uint16_t handle);
 
-extern void btsnd_hcic_ble_encrypt(uint8_t* key, uint8_t key_len,
-                                   uint8_t* plain_text, uint8_t pt_len,
-                                   void* p_cmd_cplt_cback);
-
 extern void btsnd_hcic_ble_rand(base::Callback<void(BT_OCTET8)> cb);
 
 extern void btsnd_hcic_ble_start_enc(uint16_t handle,
@@ -625,11 +463,6 @@ extern void btsnd_hcic_ble_set_data_length(uint16_t conn_handle,
                                            uint16_t tx_octets,
                                            uint16_t tx_time);
 
-extern void btsnd_hcic_ble_add_device_resolving_list(uint8_t addr_type_peer,
-                                                     const RawAddress& bda_peer,
-                                                     const Octet16& irk_peer,
-                                                     const Octet16& irk_local);
-
 struct scanning_phy_cfg {
   uint8_t scan_type;
   uint16_t scan_int;
@@ -662,15 +495,6 @@ extern void btsnd_hcic_ble_ext_create_conn(uint8_t init_filter_policy,
                                            const RawAddress& bda_peer,
                                            uint8_t initiating_phys,
                                            EXT_CONN_PHY_CFG* phy_cfg);
-
-extern void btsnd_hcic_ble_rm_device_resolving_list(
-    tBLE_ADDR_TYPE addr_type_peer, const RawAddress& bda_peer);
-
-extern void btsnd_hcic_ble_set_privacy_mode(tBLE_ADDR_TYPE addr_type_peer,
-                                            const RawAddress& bda_peer,
-                                            uint8_t privacy_type);
-
-extern void btsnd_hcic_ble_clear_resolving_list(void);
 
 extern void btsnd_hcic_ble_read_resolvable_addr_peer(
     uint8_t addr_type_peer, const RawAddress& bda_peer);

@@ -54,6 +54,13 @@ size_t write(const uint8_t* buf, uint32_t len);
 /* Define the structures needed by sco
  */
 
+#ifndef CASE_RETURN_TEXT
+#define CASE_RETURN_TEXT(code) \
+  case code:                   \
+    return #code
+#endif
+
+/* Define the structures needed by sco */
 typedef enum : uint16_t {
   SCO_ST_UNUSED = 0,
   SCO_ST_LISTENING = 1,
@@ -68,26 +75,22 @@ typedef enum : uint16_t {
 
 inline std::string sco_state_text(const tSCO_STATE& state) {
   switch (state) {
-    case SCO_ST_UNUSED:
-      return std::string("unused");
-    case SCO_ST_LISTENING:
-      return std::string("listening");
-    case SCO_ST_W4_CONN_RSP:
-      return std::string("connect_response");
-    case SCO_ST_CONNECTING:
-      return std::string("connecting");
-    case SCO_ST_CONNECTED:
-      return std::string("connected");
-    case SCO_ST_DISCONNECTING:
-      return std::string("disconnecting");
-    case SCO_ST_PEND_UNPARK:
-      return std::string("pending_unpark");
-    case SCO_ST_PEND_ROLECHANGE:
-      return std::string("pending_role_change");
-    case SCO_ST_PEND_MODECHANGE:
-      return std::string("pending_mode_change");
+    CASE_RETURN_TEXT(SCO_ST_UNUSED);
+    CASE_RETURN_TEXT(SCO_ST_LISTENING);
+    CASE_RETURN_TEXT(SCO_ST_W4_CONN_RSP);
+    CASE_RETURN_TEXT(SCO_ST_CONNECTING);
+    CASE_RETURN_TEXT(SCO_ST_CONNECTED);
+    CASE_RETURN_TEXT(SCO_ST_DISCONNECTING);
+    CASE_RETURN_TEXT(SCO_ST_PEND_UNPARK);
+    CASE_RETURN_TEXT(SCO_ST_PEND_ROLECHANGE);
+    CASE_RETURN_TEXT(SCO_ST_PEND_MODECHANGE);
+    default:
+      return std::string("unknown_sco_state: ") +
+             std::to_string(static_cast<uint16_t>(state));
   }
 }
+
+#undef CASE_RETURN_TEXT
 
 /* Define the structure that contains (e)SCO data */
 typedef struct {
@@ -137,8 +140,9 @@ typedef struct {
 
   void Init() {
     def_esco_parms = esco_parameters_for_codec(ESCO_CODEC_CVSD_S3);
-    bluetooth::audio::sco::init();
   }
+
+  void Free() { bluetooth::audio::sco::cleanup(); }
 
   uint16_t get_index(const tSCO_CONN* p_sco) const {
     CHECK(p_sco != nullptr);

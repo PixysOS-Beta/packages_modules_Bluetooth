@@ -63,6 +63,12 @@ typedef enum : uint8_t {
   L2CAP_PRIORITY_HIGH = 1,
 } tL2CAP_PRIORITY;
 
+/* Values for priority parameter to L2CA_SetAclLatency */
+typedef enum : uint8_t {
+  L2CAP_LATENCY_NORMAL = 0,
+  L2CAP_LATENCY_LOW = 1,
+} tL2CAP_LATENCY;
+
 /* Values for priority parameter to L2CA_SetTxPriority */
 #define L2CAP_CHNL_PRIORITY_HIGH 0
 #define L2CAP_CHNL_PRIORITY_LOW 2
@@ -100,6 +106,8 @@ typedef uint8_t tL2CAP_CHNL_DATA_RATE;
 #define L2C_INVALID_PSM(psm) (((psm)&0x0101) != 0x0001)
 #define L2C_IS_VALID_PSM(psm) (((psm)&0x0101) == 0x0001)
 #define L2C_IS_VALID_LE_PSM(psm) (((psm) > 0x0000) && ((psm) < 0x0100))
+
+#define L2CAP_NO_IDLE_TIMEOUT 0xFFFF
 
 /*****************************************************************************
  *  Type Definitions
@@ -181,6 +189,9 @@ constexpr uint16_t L2CAP_LE_CREDIT_THRESHOLD = 0x0040;
 static_assert(L2CAP_LE_CREDIT_THRESHOLD < L2CAP_LE_CREDIT_DEFAULT,
               "Threshold must be smaller than default credits");
 
+// Max number of CIDs in the L2CAP CREDIT BASED CONNECTION REQUEST
+constexpr uint16_t L2CAP_CREDIT_BASED_MAX_CIDS = 5;
+
 /* Define a structure to hold the configuration parameter for LE L2CAP
  * connection oriented channels.
  */
@@ -189,6 +200,7 @@ struct tL2CAP_LE_CFG_INFO {
   uint16_t mtu = 100;
   uint16_t mps = 100;
   uint16_t credits = L2CAP_LE_CREDIT_DEFAULT;
+  uint8_t number_of_channels = L2CAP_CREDIT_BASED_MAX_CIDS;
 };
 
 /*********************************
@@ -283,6 +295,14 @@ typedef void(tL2CA_CREDIT_BASED_CONNECT_IND_CB)(const RawAddress& bdaddr,
                                                 uint16_t psm, uint16_t peer_mtu,
                                                 uint8_t identifier);
 
+/* Collision Indication callback prototype. Used to notify upper layer that
+ * remote devices sent Credit Based Connection Request but it was rejected due
+ * to ongoing local request. Upper layer might want to sent another request when
+ * local request is completed. Parameters are:
+ *              BD Address of remote
+ */
+typedef void(tL2CA_CREDIT_BASED_COLLISION_IND_CB)(const RawAddress& bdaddr);
+
 /* Credit based connection confirmation callback prototype. Parameters are
  *              BD Address of remote
  *              Connected Local CIDs
@@ -324,6 +344,7 @@ typedef struct {
   tL2CA_CREDIT_BASED_CONNECT_CFM_CB* pL2CA_CreditBasedConnectCfm_Cb;
   tL2CA_CREDIT_BASED_RECONFIG_COMPLETED_CB*
       pL2CA_CreditBasedReconfigCompleted_Cb;
+  tL2CA_CREDIT_BASED_COLLISION_IND_CB* pL2CA_CreditBasedCollisionInd_Cb;
 } tL2CAP_APPL_INFO;
 
 /* Define the structure that applications use to create or accept
@@ -480,6 +501,18 @@ extern bool L2CA_GetPeerLECocConfig(uint16_t lcid,
 
 /*******************************************************************************
  *
+ *  Function         L2CA_GetPeerLECocCredit
+ *
+ *  Description      Get peers current credit for LE Connection Oriented
+ *                   Channel.
+ *
+ *  Return value:    Number of the peer current credit
+ *
+ ******************************************************************************/
+uint16_t L2CA_GetPeerLECocCredit(const RawAddress& bd_addr, uint16_t lcid);
+
+/*******************************************************************************
+ *
  *  Function         L2CA_ReconfigCreditBasedConnsReq
  *
  *  Description      Start reconfigure procedure on Connection Oriented Channel.
@@ -611,6 +644,18 @@ extern uint16_t L2CA_FlushChannel(uint16_t lcid, uint16_t num_to_flush);
 
 /*******************************************************************************
  *
+ * Function         L2CA_UseLatencyMode
+ *
+ * Description      Sets use latency mode for an ACL channel.
+ *
+ * Returns          true if a valid channel, else false
+ *
+ ******************************************************************************/
+extern bool L2CA_UseLatencyMode(const RawAddress& bd_addr,
+                                bool use_latency_mode);
+
+/*******************************************************************************
+ *
  * Function         L2CA_SetAclPriority
  *
  * Description      Sets the transmission priority for an ACL channel.
@@ -622,6 +667,18 @@ extern uint16_t L2CA_FlushChannel(uint16_t lcid, uint16_t num_to_flush);
  ******************************************************************************/
 extern bool L2CA_SetAclPriority(const RawAddress& bd_addr,
                                 tL2CAP_PRIORITY priority);
+
+/*******************************************************************************
+ *
+ * Function         L2CA_SetAclLatency
+ *
+ * Description      Sets the transmission latency for a channel.
+ *
+ * Returns          true if a valid channel, else false
+ *
+ ******************************************************************************/
+extern bool L2CA_SetAclLatency(const RawAddress& bd_addr,
+                               tL2CAP_LATENCY latency);
 
 /*******************************************************************************
  *
@@ -784,6 +841,8 @@ extern bool L2CA_RemoveFixedChnl(uint16_t fixed_cid, const RawAddress& rem_bda);
  ******************************************************************************/
 extern bool L2CA_SetLeGattTimeout(const RawAddress& rem_bda,
                                   uint16_t idle_tout);
+
+extern bool L2CA_MarkLeLinkAsActive(const RawAddress& rem_bda);
 
 extern bool L2CA_UpdateBleConnParams(const RawAddress& rem_bda,
                                      uint16_t min_int, uint16_t max_int,

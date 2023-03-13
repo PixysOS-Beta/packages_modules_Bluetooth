@@ -28,6 +28,14 @@ namespace bluetooth {
 namespace audio {
 namespace le_audio {
 
+enum class StartRequestState {
+  IDLE = 0x00,
+  PENDING_BEFORE_RESUME,
+  PENDING_AFTER_RESUME,
+  CONFIRMED,
+  CANCELED,
+};
+
 constexpr uint8_t kChannelNumberMono = 1;
 constexpr uint8_t kChannelNumberStereo = 2;
 
@@ -74,11 +82,14 @@ class LeAudioClientInterface {
     virtual void CancelStreamingRequest() = 0;
     virtual void UpdateAudioConfigToHal(
         const ::le_audio::offload_config& config) = 0;
+    virtual void SuspendedForReconfiguration() = 0;
+    virtual void ReconfigurationComplete() = 0;
   };
 
  public:
   class Sink : public IClientInterfaceEndpoint {
    public:
+    Sink(bool is_broadcaster = false) : is_broadcaster_(is_broadcaster){};
     virtual ~Sink() = default;
 
     void Cleanup() override;
@@ -90,8 +101,16 @@ class LeAudioClientInterface {
     void CancelStreamingRequest() override;
     void UpdateAudioConfigToHal(
         const ::le_audio::offload_config& config) override;
+    void UpdateBroadcastAudioConfigToHal(
+        const ::le_audio::broadcast_offload_config& config);
+    void SuspendedForReconfiguration() override;
+    void ReconfigurationComplete() override;
     // Read the stream of bytes sinked to us by the upper layers
     size_t Read(uint8_t* p_buf, uint32_t len);
+    bool IsBroadcaster() { return is_broadcaster_; }
+
+   private:
+    bool is_broadcaster_ = false;
   };
   class Source : public IClientInterfaceEndpoint {
    public:
@@ -106,6 +125,8 @@ class LeAudioClientInterface {
     void CancelStreamingRequest() override;
     void UpdateAudioConfigToHal(
         const ::le_audio::offload_config& config) override;
+    void SuspendedForReconfiguration() override;
+    void ReconfigurationComplete() override;
     // Source the given stream of bytes to be sinked into the upper layers
     size_t Write(const uint8_t* p_buf, uint32_t len);
   };
@@ -113,9 +134,12 @@ class LeAudioClientInterface {
   // Get LE Audio sink client interface if it's not previously acquired and not
   // yet released.
   Sink* GetSink(StreamCallbacks stream_cb,
-                bluetooth::common::MessageLoopThread* message_loop);
-  // This should be called before trying to get sink interface
-  bool IsSinkAcquired();
+                bluetooth::common::MessageLoopThread* message_loop,
+                bool is_broadcasting_session_type);
+  // This should be called before trying to get unicast sink interface
+  bool IsUnicastSinkAcquired();
+  // This should be called before trying to get broadcast sink interface
+  bool IsBroadcastSinkAcquired();
   // Release sink interface if belongs to LE audio client interface
   bool ReleaseSink(Sink* sink);
 
@@ -133,7 +157,8 @@ class LeAudioClientInterface {
 
  private:
   static LeAudioClientInterface* interface;
-  Sink* sink_ = nullptr;
+  Sink* unicast_sink_ = nullptr;
+  Sink* broadcast_sink_ = nullptr;
   Source* source_ = nullptr;
 };
 

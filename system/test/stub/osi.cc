@@ -51,6 +51,13 @@ extern std::map<std::string, int> mock_function_count_map;
 #define UNUSED_ATTR
 #endif
 
+struct StringComparison {
+  bool operator()(char const* lhs, char const* rhs) const {
+    return strcmp(lhs, rhs) < 0;
+  }
+};
+std::map<const char*, bool, StringComparison> fake_osi_bool_props_map;
+
 std::list<entry_t>::iterator section_t::Find(const std::string& key) {
   mock_function_count_map[__func__]++;
   return std::find_if(
@@ -380,15 +387,21 @@ alarm_t* alarm_new_periodic(const char* name) {
   mock_function_count_map[__func__]++;
   return nullptr;
 }
+struct fake_osi_alarm_set_on_mloop fake_osi_alarm_set_on_mloop_;
 bool alarm_is_scheduled(const alarm_t* alarm) {
   mock_function_count_map[__func__]++;
-  return false;
+  return (fake_osi_alarm_set_on_mloop_.cb != nullptr);
 }
 uint64_t alarm_get_remaining_ms(const alarm_t* alarm) {
   mock_function_count_map[__func__]++;
   return 0;
 }
-void alarm_cancel(alarm_t* alarm) { mock_function_count_map[__func__]++; }
+void alarm_cancel(alarm_t* alarm) {
+  mock_function_count_map[__func__]++;
+  fake_osi_alarm_set_on_mloop_.interval_ms = 0;
+  fake_osi_alarm_set_on_mloop_.cb = nullptr;
+  fake_osi_alarm_set_on_mloop_.data = nullptr;
+}
 void alarm_cleanup(void) { mock_function_count_map[__func__]++; }
 void alarm_debug_dump(int fd) { mock_function_count_map[__func__]++; }
 void alarm_free(alarm_t* alarm) { mock_function_count_map[__func__]++; }
@@ -397,7 +410,6 @@ void alarm_set(alarm_t* alarm, uint64_t interval_ms, alarm_callback_t cb,
   mock_function_count_map[__func__]++;
 }
 
-struct fake_osi_alarm_set_on_mloop fake_osi_alarm_set_on_mloop_;
 void alarm_set_on_mloop(alarm_t* alarm, uint64_t interval_ms,
                         alarm_callback_t cb, void* data) {
   mock_function_count_map[__func__]++;
@@ -592,8 +604,15 @@ void ringbuffer_free(ringbuffer_t* rb) { mock_function_count_map[__func__]++; }
 
 bool osi_property_get_bool(const char* key, bool default_value) {
   mock_function_count_map[__func__]++;
+  if (fake_osi_bool_props_map.count(key))
+    return fake_osi_bool_props_map.at(key);
   return default_value;
 }
+
+void osi_property_set_bool(const char* key, bool value) {
+  fake_osi_bool_props_map.insert_or_assign(key, value);
+}
+
 int osi_property_get(const char* key, char* value, const char* default_value) {
   mock_function_count_map[__func__]++;
   return 0;

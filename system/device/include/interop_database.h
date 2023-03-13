@@ -126,8 +126,14 @@ static const interop_addr_entry_t interop_addr_database[] = {
     // Toyota Prius - 2015
     {{{0xfc, 0xc2, 0xde, 0, 0, 0}}, 3, INTEROP_DISABLE_ROLE_SWITCH},
 
+    // Toyota Prius - b/231092023
+    {{{0x9c, 0xdf, 0x03, 0, 0, 0}}, 3, INTEROP_DISABLE_ROLE_SWITCH},
+
     // OBU II Bluetooth dongle
     {{{0x00, 0x04, 0x3e, 0, 0, 0}}, 3, INTEROP_DISABLE_ROLE_SWITCH},
+
+    // Visteon carkit
+    {{{0x00, 0x0a, 0x30, 0, 0, 0}}, 3, INTEROP_DISABLE_ROLE_SWITCH},
 
     // Roman R9020
     {{{0x00, 0x23, 0x01, 0, 0, 0}}, 3, INTEROP_DISABLE_ROLE_SWITCH},
@@ -154,8 +160,12 @@ static const interop_addr_entry_t interop_addr_database[] = {
     // because BR/EDR address and ADV random address are the same
     {{{0xd4, 0x7a, 0xe2, 0, 0, 0}}, 3, INTEROP_DISABLE_NAME_REQUEST},
 
+    // SUBARU Carkit
+    {{{0x48, 0xf0, 0x7b, 0, 0, 0}}, 3, INTEROP_AVRCP_1_4_ONLY},
+
     // Audi Carkit
     {{{0x90, 0x03, 0xb7, 0, 0, 0}}, 3, INTEROP_AVRCP_1_4_ONLY},
+    {{{0x28, 0xA1, 0x83, 0, 0, 0}}, 3, INTEROP_AVRCP_1_4_ONLY},
 
     // Lexus Carkit
     {{{0x64, 0xd4, 0xbd, 0, 0, 0}}, 3, INTEROP_AVRCP_1_4_ONLY},
@@ -178,11 +188,11 @@ static const interop_addr_entry_t interop_addr_database[] = {
     // KDDI Carkit
     {{{0x44, 0xea, 0xd8, 0, 0, 0}}, 3, INTEROP_DISABLE_SNIFF},
 
-    // Phonak
-    {{{0x70, 0x66, 0x1b, 0, 0, 0}}, 3, INTEROP_DISABLE_SNIFF},
-
     // Toyota Camry 2018 Carkit HFP AT+BIND missing
     {{{0x94, 0xb2, 0xcc, 0x30, 0, 0}}, 4, INTEROP_SLC_SKIP_BIND_COMMAND},
+
+    // BMW Carkit
+    {{{0x00, 0x0a, 0x08, 0, 0, 0}}, 3, INTEROP_AVRCP_1_3_ONLY},
 };
 
 typedef struct {

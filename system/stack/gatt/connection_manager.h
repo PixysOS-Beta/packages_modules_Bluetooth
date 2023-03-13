@@ -37,11 +37,12 @@ namespace connection_manager {
 using tAPP_ID = uint8_t;
 
 /* for background connection */
+extern bool background_connect_targeted_announcement_add(
+    tAPP_ID app_id, const RawAddress& address);
 extern bool background_connect_add(tAPP_ID app_id, const RawAddress& address);
 extern bool background_connect_remove(tAPP_ID app_id,
                                       const RawAddress& address);
 extern bool remove_unconditional(const RawAddress& address);
-extern bool remove_unconditional_from_shim(const RawAddress& address);
 
 extern void reset(bool after_reset);
 

@@ -27,12 +27,15 @@ using bluetooth::eatt::EattExtension;
 class MockEattExtension : public EattExtension {
  public:
   MockEattExtension() = default;
+  MockEattExtension(const MockEattExtension&) = delete;
+  MockEattExtension& operator=(const MockEattExtension&) = delete;
+
   ~MockEattExtension() override = default;
 
   static MockEattExtension* GetInstance();
 
   MOCK_METHOD((void), Connect, (const RawAddress& bd_addr));
-  MOCK_METHOD((void), Disconnect, (const RawAddress& bd_addr));
+  MOCK_METHOD((void), Disconnect, (const RawAddress& bd_addr, uint16_t cid));
   MOCK_METHOD((void), Reconfigure,
               (const RawAddress& bd_addr, uint16_t cid, uint16_t mtu));
   MOCK_METHOD((void), ReconfigureAll,
@@ -49,7 +52,7 @@ class MockEattExtension : public EattExtension {
               (const RawAddress& bd_addr));
   MOCK_METHOD((void), FreeGattResources, (const RawAddress& bd_addr));
   MOCK_METHOD((bool), IsOutstandingMsgInSendQueue, (const RawAddress& bd_addr));
-  MOCK_METHOD((EattChannel*), GetChannelWithQueuedData,
+  MOCK_METHOD((EattChannel*), GetChannelWithQueuedDataToSend,
               (const RawAddress& bd_addr));
   MOCK_METHOD((EattChannel*), GetChannelAvailableForClientRequest,
               (const RawAddress& bd_addr));
@@ -65,7 +68,4 @@ class MockEattExtension : public EattExtension {
 
   MOCK_METHOD((void), Start, ());
   MOCK_METHOD((void), Stop, ());
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(MockEattExtension);
 };

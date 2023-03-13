@@ -75,6 +75,18 @@ class ScanningCallback {
   virtual void OnFilterParamSetup(uint8_t available_spaces, ApcfAction action, uint8_t status) = 0;
   virtual void OnFilterConfigCallback(
       ApcfFilterType filter_type, uint8_t available_spaces, ApcfAction action, uint8_t status) = 0;
+  virtual void OnPeriodicSyncStarted(
+      int request_id,
+      uint8_t status,
+      uint16_t sync_handle,
+      uint8_t advertising_sid,
+      AddressWithType address_with_type,
+      uint8_t phy,
+      uint16_t interval) = 0;
+  virtual void OnPeriodicSyncReport(
+      uint16_t sync_handle, int8_t tx_power, int8_t rssi, uint8_t status, std::vector<uint8_t> data) = 0;
+  virtual void OnPeriodicSyncLost(uint16_t sync_handle) = 0;
+  virtual void OnPeriodicSyncTransferred(int pa_source, uint8_t status, Address address) = 0;
 };
 
 class AdvertisingPacketContentFilterCommand {
@@ -87,8 +99,10 @@ class AdvertisingPacketContentFilterCommand {
   std::vector<uint8_t> name;
   uint16_t company;
   uint16_t company_mask;
+  uint8_t ad_type;
   std::vector<uint8_t> data;
   std::vector<uint8_t> data_mask;
+  std::array<uint8_t, 16> irk;
 };
 
 class AdvertisingFilterParameter {

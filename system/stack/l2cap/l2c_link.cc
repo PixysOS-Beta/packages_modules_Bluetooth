@@ -1053,45 +1053,15 @@ void l2c_OnHciModeChangeSendPendingPackets(RawAddress remote) {
  *
  ******************************************************************************/
 static void l2c_link_send_to_lower_br_edr(tL2C_LCB* p_lcb, BT_HDR* p_buf) {
-  const uint16_t acl_data_size_classic =
-      controller_get_interface()->get_acl_data_size_classic();
   const uint16_t link_xmit_quota = p_lcb->link_xmit_quota;
-  const bool is_bdr_and_fits_in_buffer = true;
 
-  if (is_bdr_and_fits_in_buffer) {
-    if (link_xmit_quota == 0) {
-      l2cb.round_robin_unacked++;
-    }
-    p_lcb->sent_not_acked++;
-    p_buf->layer_specific = 0;
-    l2cb.controller_xmit_window--;
-  } else {
-    uint16_t num_segs =
-        (p_buf->len - HCI_DATA_PREAMBLE_SIZE + acl_data_size_classic - 1) /
-        acl_data_size_classic;
-
-    /* If doing round-robin, then only 1 segment each time */
-    if (p_lcb->link_xmit_quota == 0) {
-      num_segs = 1;
-      p_lcb->partial_segment_being_sent = true;
-    } else {
-      /* Multi-segment packet. Make sure it can fit */
-      if (num_segs > l2cb.controller_xmit_window) {
-        num_segs = l2cb.controller_xmit_window;
-        p_lcb->partial_segment_being_sent = true;
-      }
-
-      if (num_segs > (p_lcb->link_xmit_quota - p_lcb->sent_not_acked)) {
-        num_segs = (p_lcb->link_xmit_quota - p_lcb->sent_not_acked);
-        p_lcb->partial_segment_being_sent = true;
-      }
-    }
-
-    p_lcb->sent_not_acked += num_segs;
-    p_buf->layer_specific = num_segs;
-    l2cb.controller_xmit_window -= num_segs;
-    if (p_lcb->link_xmit_quota == 0) l2cb.round_robin_unacked += num_segs;
+  if (link_xmit_quota == 0) {
+    l2cb.round_robin_unacked++;
   }
+  p_lcb->sent_not_acked++;
+  p_buf->layer_specific = 0;
+  l2cb.controller_xmit_window--;
+
   acl_send_data_packet_br_edr(p_lcb->remote_bd_addr, p_buf);
   LOG_DEBUG("TotalWin=%d,Hndl=0x%x,Quota=%d,Unack=%d,RRQuota=%d,RRUnack=%d",
             l2cb.controller_xmit_window, p_lcb->Handle(),
@@ -1100,47 +1070,15 @@ static void l2c_link_send_to_lower_br_edr(tL2C_LCB* p_lcb, BT_HDR* p_buf) {
 }
 
 static void l2c_link_send_to_lower_ble(tL2C_LCB* p_lcb, BT_HDR* p_buf) {
-  const uint16_t acl_packet_size_ble =
-      controller_get_interface()->get_acl_packet_size_ble();
-  const uint16_t acl_data_size_ble =
-      controller_get_interface()->get_acl_data_size_ble();
   const uint16_t link_xmit_quota = p_lcb->link_xmit_quota;
-  const bool is_ble_and_fits_in_buffer = (p_buf->len <= acl_packet_size_ble);
 
-  if (is_ble_and_fits_in_buffer) {
-    if (link_xmit_quota == 0) {
-      l2cb.ble_round_robin_unacked++;
-    }
-    p_lcb->sent_not_acked++;
-    p_buf->layer_specific = 0;
-    l2cb.controller_le_xmit_window--;
-  } else {
-    uint16_t num_segs =
-        (p_buf->len - HCI_DATA_PREAMBLE_SIZE + acl_data_size_ble - 1) /
-        acl_data_size_ble;
-
-    /* If doing round-robin, then only 1 segment each time */
-    if (p_lcb->link_xmit_quota == 0) {
-      num_segs = 1;
-      p_lcb->partial_segment_being_sent = true;
-    } else {
-      /* Multi-segment packet. Make sure it can fit */
-      if (num_segs > l2cb.controller_le_xmit_window) {
-        num_segs = l2cb.controller_le_xmit_window;
-        p_lcb->partial_segment_being_sent = true;
-      }
-
-      if (num_segs > (p_lcb->link_xmit_quota - p_lcb->sent_not_acked)) {
-        num_segs = (p_lcb->link_xmit_quota - p_lcb->sent_not_acked);
-        p_lcb->partial_segment_being_sent = true;
-      }
-    }
-
-    p_lcb->sent_not_acked += num_segs;
-    p_buf->layer_specific = num_segs;
-    l2cb.controller_le_xmit_window -= num_segs;
-    if (p_lcb->link_xmit_quota == 0) l2cb.ble_round_robin_unacked += num_segs;
+  if (link_xmit_quota == 0) {
+    l2cb.ble_round_robin_unacked++;
   }
+  p_lcb->sent_not_acked++;
+  p_buf->layer_specific = 0;
+  l2cb.controller_le_xmit_window--;
+
   acl_send_data_packet_ble(p_lcb->remote_bd_addr, p_buf);
   LOG_DEBUG("TotalWin=%d,Hndl=0x%x,Quota=%d,Unack=%d,RRQuota=%d,RRUnack=%d",
             l2cb.controller_le_xmit_window, p_lcb->Handle(),
@@ -1153,112 +1091,6 @@ static void l2c_link_send_to_lower(tL2C_LCB* p_lcb, BT_HDR* p_buf) {
     l2c_link_send_to_lower_br_edr(p_lcb, p_buf);
   } else {
     l2c_link_send_to_lower_ble(p_lcb, p_buf);
-  }
-}
-
-/*******************************************************************************
- *
- * Function         l2c_link_process_num_completed_pkts
- *
- * Description      This function is called when a "number-of-completed-packets"
- *                  event is received from the controller. It updates all the
- *                  LCB transmit counts.
- *
- * Returns          void
- *
- ******************************************************************************/
-void l2c_link_process_num_completed_pkts(uint8_t* p, uint8_t evt_len) {
-  if (bluetooth::shim::is_gd_l2cap_enabled()) {
-    return;
-  }
-  uint8_t num_handles, xx;
-  uint16_t handle;
-  uint16_t num_sent;
-  tL2C_LCB* p_lcb;
-
-  if (evt_len > 0) {
-    STREAM_TO_UINT8(num_handles, p);
-  } else {
-    num_handles = 0;
-  }
-
-  if (num_handles > evt_len / (2 * sizeof(uint16_t))) {
-    android_errorWriteLog(0x534e4554, "141617601");
-    num_handles = evt_len / (2 * sizeof(uint16_t));
-  }
-
-  for (xx = 0; xx < num_handles; xx++) {
-    STREAM_TO_UINT16(handle, p);
-    /* Extract the handle */
-    handle = HCID_GET_HANDLE(handle);
-    STREAM_TO_UINT16(num_sent, p);
-
-    p_lcb = l2cu_find_lcb_by_handle(handle);
-
-    if (p_lcb) {
-      if (p_lcb && (p_lcb->transport == BT_TRANSPORT_LE))
-        l2cb.controller_le_xmit_window += num_sent;
-      else {
-        /* Maintain the total window to the controller */
-        l2cb.controller_xmit_window += num_sent;
-      }
-      /* If doing round-robin, adjust communal counts */
-      if (p_lcb->link_xmit_quota == 0) {
-        if (p_lcb->transport == BT_TRANSPORT_LE) {
-          /* Don't go negative */
-          if (l2cb.ble_round_robin_unacked > num_sent)
-            l2cb.ble_round_robin_unacked -= num_sent;
-          else
-            l2cb.ble_round_robin_unacked = 0;
-        } else {
-          /* Don't go negative */
-          if (l2cb.round_robin_unacked > num_sent)
-            l2cb.round_robin_unacked -= num_sent;
-          else
-            l2cb.round_robin_unacked = 0;
-        }
-      }
-
-      /* Don't go negative */
-      if (p_lcb->sent_not_acked > num_sent)
-        p_lcb->sent_not_acked -= num_sent;
-      else
-        p_lcb->sent_not_acked = 0;
-
-      l2c_link_check_send_pkts(p_lcb, 0, NULL);
-
-      /* If we were doing round-robin for low priority links, check 'em */
-      if ((p_lcb->acl_priority == L2CAP_PRIORITY_HIGH) &&
-          (l2cb.check_round_robin) &&
-          (l2cb.round_robin_unacked < l2cb.round_robin_quota)) {
-        l2c_link_check_send_pkts(NULL, 0, NULL);
-      }
-      if ((p_lcb->transport == BT_TRANSPORT_LE) &&
-          (p_lcb->acl_priority == L2CAP_PRIORITY_HIGH) &&
-          ((l2cb.ble_check_round_robin) &&
-           (l2cb.ble_round_robin_unacked < l2cb.ble_round_robin_quota))) {
-        l2c_link_check_send_pkts(NULL, 0, NULL);
-      }
-    }
-
-    if (p_lcb) {
-      if (p_lcb->transport == BT_TRANSPORT_LE) {
-        LOG_DEBUG("TotalWin=%d,LinkUnack(0x%x)=%d,RRCheck=%d,RRUnack=%d",
-                  l2cb.controller_le_xmit_window, p_lcb->Handle(),
-                  p_lcb->sent_not_acked, l2cb.ble_check_round_robin,
-                  l2cb.ble_round_robin_unacked);
-      } else {
-        LOG_DEBUG("TotalWin=%d,LinkUnack(0x%x)=%d,RRCheck=%d,RRUnack=%d",
-                  l2cb.controller_xmit_window, p_lcb->Handle(),
-                  p_lcb->sent_not_acked, l2cb.check_round_robin,
-                  l2cb.round_robin_unacked);
-      }
-    } else {
-      LOG_DEBUG("TotalWin=%d  LE_Win: %d, Handle=0x%x, RRCheck=%d, RRUnack=%d",
-                l2cb.controller_xmit_window, l2cb.controller_le_xmit_window,
-                handle, l2cb.ble_check_round_robin,
-                l2cb.ble_round_robin_unacked);
-    }
   }
 }
 

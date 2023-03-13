@@ -29,9 +29,12 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.os.Handler;
 import android.provider.CallLog;
+import android.sysprop.BluetoothProperties;
 import android.util.Log;
 
+import com.android.bluetooth.BluetoothMethodProxy;
 import com.android.bluetooth.R;
 import com.android.bluetooth.Utils;
 import com.android.bluetooth.btservice.AdapterService;
@@ -39,6 +42,7 @@ import com.android.bluetooth.btservice.ProfileService;
 import com.android.bluetooth.btservice.storage.DatabaseManager;
 import com.android.bluetooth.hfpclient.HfpClientConnectionService;
 import com.android.bluetooth.sdp.SdpManager;
+import com.android.internal.annotations.VisibleForTesting;
 import com.android.modules.utils.SynchronousResultReceiver;
 
 import java.util.ArrayList;
@@ -58,15 +62,62 @@ public class PbapClientService extends ProfileService {
 
     private static final String TAG = "PbapClientService";
     private static final String SERVICE_NAME = "Phonebook Access PCE";
+
+    /**
+     * The component names for the owned authenticator service
+     */
+    private static final String AUTHENTICATOR_SERVICE =
+            AuthenticationService.class.getCanonicalName();
+
     // MAXIMUM_DEVICES set to 10 to prevent an excessive number of simultaneous devices.
     private static final int MAXIMUM_DEVICES = 10;
-    private Map<BluetoothDevice, PbapClientStateMachine> mPbapClientStateMachineMap =
+    @VisibleForTesting
+    Map<BluetoothDevice, PbapClientStateMachine> mPbapClientStateMachineMap =
             new ConcurrentHashMap<>();
     private static PbapClientService sPbapClientService;
-    private PbapBroadcastReceiver mPbapBroadcastReceiver = new PbapBroadcastReceiver();
+    @VisibleForTesting
+    PbapBroadcastReceiver mPbapBroadcastReceiver = new PbapBroadcastReceiver();
     private int mSdpHandle = -1;
 
     private DatabaseManager mDatabaseManager;
+
+    /**
+     * There's an ~1-2 second latency between when our Authentication service is set as available to
+     * the system and when the Authentication/Account framework code will recognize it and allow us
+     * to alter accounts. In lieu of the Accounts team dealing with this race condition, we're going
+     * to periodically poll over 3 seconds until our accounts are visible, remove old accounts, and
+     * then notify device state machines that they can create accounts and download contacts.
+     */
+    // TODO(233361365): Remove this pattern when the framework solves their race condition
+    private static final int ACCOUNT_VISIBILITY_CHECK_MS = 500;
+    private static final int ACCOUNT_VISIBILITY_CHECK_TRIES_MAX = 6;
+    private int mAccountVisibilityCheckTries = 0;
+    private final Handler mAuthServiceHandler = new Handler();
+    private final Runnable mCheckAuthService = new Runnable() {
+        @Override
+        public void run() {
+            // If our accounts are finally visible to use, clean up old ones and tell devices they
+            // can issue downloads if they're ready. Otherwise, wait and try again.
+            if (isAuthenticationServiceReady()) {
+                Log.i(TAG, "Service ready! Clean up old accounts and try contacts downloads");
+                removeUncleanAccounts();
+                for (PbapClientStateMachine stateMachine : mPbapClientStateMachineMap.values()) {
+                    stateMachine.tryDownloadIfConnected();
+                }
+            } else if (mAccountVisibilityCheckTries < ACCOUNT_VISIBILITY_CHECK_TRIES_MAX) {
+                mAccountVisibilityCheckTries += 1;
+                Log.w(TAG, "AccountManager hasn't registered our service yet. Retry "
+                        + mAccountVisibilityCheckTries + "/" + ACCOUNT_VISIBILITY_CHECK_TRIES_MAX);
+                mAuthServiceHandler.postDelayed(this, ACCOUNT_VISIBILITY_CHECK_MS);
+            } else {
+                Log.e(TAG, "Failed to register Authenication Service and get account visibility");
+            }
+        }
+    };
+
+    public static boolean isEnabled() {
+        return BluetoothProperties.isProfilePbapClientEnabled().orElse(false);
+    }
 
     @Override
     public IProfileServiceBinder initBinder() {
@@ -82,6 +133,8 @@ public class PbapClientService extends ProfileService {
         mDatabaseManager = Objects.requireNonNull(AdapterService.getAdapterService().getDatabase(),
                 "DatabaseManager cannot be null when PbapClientService starts");
 
+        setComponentAvailable(AUTHENTICATOR_SERVICE, true);
+
         IntentFilter filter = new IntentFilter();
         filter.addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED);
         // delay initial download until after the user is unlocked to add an account.
@@ -95,7 +148,7 @@ public class PbapClientService extends ProfileService {
             Log.w(TAG, "Unable to register pbapclient receiver", e);
         }
 
-        removeUncleanAccounts();
+        initializeAuthenticationService();
         registerSdpRecord();
         setPbapClientService(this);
         return true;
@@ -113,7 +166,9 @@ public class PbapClientService extends ProfileService {
         for (PbapClientStateMachine pbapClientStateMachine : mPbapClientStateMachineMap.values()) {
             pbapClientStateMachine.doQuit();
         }
-        removeUncleanAccounts();
+        mPbapClientStateMachineMap.clear();
+        cleanupAuthenicationService();
+        setComponentAvailable(AUTHENTICATOR_SERVICE, false);
         return true;
     }
 
@@ -127,7 +182,45 @@ public class PbapClientService extends ProfileService {
         }
     }
 
+    /**
+     * Periodically check if the account framework has recognized our service and will allow us to
+     * interact with our accounts. Notify state machines once our service is ready so we can trigger
+     * account downloads.
+     */
+    private void initializeAuthenticationService() {
+        mAuthServiceHandler.postDelayed(mCheckAuthService, ACCOUNT_VISIBILITY_CHECK_MS);
+    }
+
+    private void cleanupAuthenicationService() {
+        mAuthServiceHandler.removeCallbacks(mCheckAuthService);
+        removeUncleanAccounts();
+    }
+
+    /**
+     * Determine if our account type is visible to us yet. If it is, then our service is ready and
+     * our account type is ready to use.
+     *
+     * Make a placeholder device account and determine our visibility relative to it. Note that this
+     * function uses the same restrictions are the other add and remove functions, but is *also*
+     * available to all system apps instead of throwing a runtime SecurityException.
+     */
+    protected boolean isAuthenticationServiceReady() {
+        Account account = new Account("00:00:00:00:00:00", getString(R.string.pbap_account_type));
+        AccountManager accountManager = AccountManager.get(this);
+        int visibility = accountManager.getAccountVisibility(account, getPackageName());
+        if (DBG) {
+            Log.d(TAG, "Checking visibility, visibility=" + visibility);
+        }
+        return visibility == AccountManager.VISIBILITY_VISIBLE
+                || visibility == AccountManager.VISIBILITY_USER_MANAGED_VISIBLE;
+    }
+
     private void removeUncleanAccounts() {
+        if (!isAuthenticationServiceReady()) {
+            Log.w(TAG, "Can't remove accounts. AccountManager hasn't registered our service yet.");
+            return;
+        }
+
         // Find all accounts that match the type "pbap" and delete them.
         AccountManager accountManager = AccountManager.get(this);
         Account[] accounts =
@@ -155,7 +248,8 @@ public class PbapClientService extends ProfileService {
                 + CallLog.Calls.PHONE_ACCOUNT_COMPONENT_NAME + "=?";
         String[] selectionArgs = new String[]{accountName, componentName.flattenToString()};
         try {
-            getContentResolver().delete(CallLog.Calls.CONTENT_URI, selectionFilter, selectionArgs);
+            BluetoothMethodProxy.getInstance().contentResolverDelete(getContentResolver(),
+                    CallLog.Calls.CONTENT_URI, selectionFilter, selectionArgs);
         } catch (IllegalArgumentException e) {
             Log.w(TAG, "Call Logs could not be deleted, they may not exist yet.");
         }
@@ -190,7 +284,8 @@ public class PbapClientService extends ProfileService {
     }
 
 
-    private class PbapBroadcastReceiver extends BroadcastReceiver {
+    @VisibleForTesting
+    class PbapBroadcastReceiver extends BroadcastReceiver {
         @Override
         public void onReceive(Context context, Intent intent) {
             String action = intent.getAction();
@@ -202,7 +297,7 @@ public class PbapClientService extends ProfileService {
                 }
             } else if (action.equals(Intent.ACTION_USER_UNLOCKED)) {
                 for (PbapClientStateMachine stateMachine : mPbapClientStateMachineMap.values()) {
-                    stateMachine.resumeDownload();
+                    stateMachine.tryDownloadIfConnected();
                 }
             } else if (action.equals(BluetoothHeadsetClient.ACTION_CONNECTION_STATE_CHANGED)) {
                 // PbapClientConnectionHandler has code to remove calllogs when PBAP disconnects.
@@ -226,7 +321,8 @@ public class PbapClientService extends ProfileService {
     /**
      * Handler for incoming service calls
      */
-    private static class BluetoothPbapClientBinder extends IBluetoothPbapClient.Stub
+    @VisibleForTesting
+    static class BluetoothPbapClientBinder extends IBluetoothPbapClient.Stub
             implements IProfileServiceBinder {
         private PbapClientService mService;
 
@@ -241,8 +337,11 @@ public class PbapClientService extends ProfileService {
 
         @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
         private PbapClientService getService(AttributionSource source) {
-            if (!Utils.checkCallerIsSystemOrActiveUser(TAG)
-                    || !Utils.checkServiceAvailable(mService, TAG)
+            if (Utils.isInstrumentationTestMode()) {
+                return mService;
+            }
+            if (!Utils.checkServiceAvailable(mService, TAG)
+                    || !Utils.checkCallerIsSystemOrActiveOrManagedUser(mService, TAG)
                     || !Utils.checkConnectPermissionForDataDelivery(mService, source, TAG)) {
                 return null;
             }
@@ -373,7 +472,8 @@ public class PbapClientService extends ProfileService {
         return sPbapClientService;
     }
 
-    private static synchronized void setPbapClientService(PbapClientService instance) {
+    @VisibleForTesting
+    static synchronized void setPbapClientService(PbapClientService instance) {
         if (VDBG) {
             Log.v(TAG, "setPbapClientService(): set to: " + instance);
         }
@@ -423,7 +523,6 @@ public class PbapClientService extends ProfileService {
         if (pbapClientStateMachine != null) {
             pbapClientStateMachine.disconnect(device);
             return true;
-
         } else {
             Log.w(TAG, "disconnect() called on unconnected device.");
             return false;
@@ -435,7 +534,8 @@ public class PbapClientService extends ProfileService {
         return getDevicesMatchingConnectionStates(desiredStates);
     }
 
-    private List<BluetoothDevice> getDevicesMatchingConnectionStates(int[] states) {
+    @VisibleForTesting
+    List<BluetoothDevice> getDevicesMatchingConnectionStates(int[] states) {
         List<BluetoothDevice> deviceList = new ArrayList<BluetoothDevice>(0);
         for (Map.Entry<BluetoothDevice, PbapClientStateMachine> stateMachineEntry :
                 mPbapClientStateMachineMap
@@ -536,6 +636,7 @@ public class PbapClientService extends ProfileService {
     @Override
     public void dump(StringBuilder sb) {
         super.dump(sb);
+        ProfileService.println(sb, "isAuthServiceReady: " + isAuthenticationServiceReady());
         for (PbapClientStateMachine stateMachine : mPbapClientStateMachineMap.values()) {
             stateMachine.dump(sb);
         }

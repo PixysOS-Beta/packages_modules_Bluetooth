@@ -31,6 +31,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
 import android.os.UserHandle;
+import android.sysprop.BluetoothProperties;
 import android.util.Log;
 
 import androidx.annotation.VisibleForTesting;
@@ -85,6 +86,10 @@ public class HidHostService extends ProfileService {
 
     static {
         classInitNative();
+    }
+
+    public static boolean isEnabled() {
+        return BluetoothProperties.isProfileHidHostEnabled().orElse(false);
     }
 
     @Override
@@ -320,7 +325,8 @@ public class HidHostService extends ProfileService {
     /**
      * Handlers for incoming service calls
      */
-    private static class BluetoothHidHostBinder extends IBluetoothHidHost.Stub
+    @VisibleForTesting
+    static class BluetoothHidHostBinder extends IBluetoothHidHost.Stub
             implements IProfileServiceBinder {
         private HidHostService mService;
 
@@ -335,8 +341,11 @@ public class HidHostService extends ProfileService {
 
         @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
         private HidHostService getService(AttributionSource source) {
-            if (!Utils.checkCallerIsSystemOrActiveUser(TAG)
-                    || !Utils.checkServiceAvailable(mService, TAG)
+            if (Utils.isInstrumentationTestMode()) {
+                return mService;
+            }
+            if (!Utils.checkServiceAvailable(mService, TAG)
+                    || !Utils.checkCallerIsSystemOrActiveOrManagedUser(mService, TAG)
                     || !Utils.checkConnectPermissionForDataDelivery(mService, source, TAG)) {
                 return null;
             }

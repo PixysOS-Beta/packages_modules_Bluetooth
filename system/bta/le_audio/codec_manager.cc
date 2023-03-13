@@ -16,13 +16,13 @@
 
 #include "codec_manager.h"
 
-#include "client_audio.h"
+#include "audio_hal_client/audio_hal_client.h"
 #include "device/include/controller.h"
+#include "le_audio_set_configuration_provider.h"
 #include "osi/include/log.h"
 #include "osi/include/properties.h"
 #include "stack/acl/acl.h"
 #include "stack/include/acl_api.h"
-#include "le_audio_set_configuration_provider.h"
 
 namespace {
 
@@ -45,12 +45,11 @@ namespace le_audio {
 struct codec_manager_impl {
  public:
   codec_manager_impl(
-      const std::vector<btle_audio_codec_config_t>& offloading_preference,
-      const std::vector<AudioSetConfiguration>& adsp_capabilities) {
+      const std::vector<btle_audio_codec_config_t>& offloading_preference) {
     offload_enable_ = osi_property_get_bool(
                           "ro.bluetooth.leaudio_offload.supported", false) &&
-                      osi_property_get_bool(
-                          "persist.bluetooth.leaudio_offload.enabled", true);
+                      !osi_property_get_bool(
+                          "persist.bluetooth.leaudio_offload.disabled", true);
     if (offload_enable_ == false) {
       LOG_INFO("offload disabled");
       return;
@@ -71,7 +70,7 @@ struct codec_manager_impl {
                             kIsoDataPathPlatformDefault, {});
     btm_configure_data_path(btm_data_direction::CONTROLLER_TO_HOST,
                             kIsoDataPathPlatformDefault, {});
-    UpdateOffloadCapability(offloading_preference, adsp_capabilities);
+    UpdateOffloadCapability(offloading_preference);
     SetCodecLocation(CodecLocation::ADSP);
   }
   ~codec_manager_impl() {
@@ -85,44 +84,97 @@ struct codec_manager_impl {
   CodecLocation GetCodecLocation(void) const { return codec_location_; }
 
   void UpdateActiveSourceAudioConfig(
-      const le_audio::stream_configuration& stream_conf, uint16_t delay_ms) {
+      const le_audio::stream_configuration& stream_conf, uint16_t delay_ms,
+      std::function<void(const ::le_audio::offload_config& config)>
+          update_receiver) {
     if (stream_conf.sink_streams.empty()) return;
 
-    sink_config.stream_map = std::move(stream_conf.sink_streams);
+    if (stream_conf.sink_is_initial) {
+      sink_config.stream_map =
+          stream_conf.sink_offloader_streams_target_allocation;
+    } else {
+      sink_config.stream_map =
+          stream_conf.sink_offloader_streams_current_allocation;
+    }
     // TODO: set the default value 16 for now, would change it if we support
     // mode bits_per_sample
     sink_config.bits_per_sample = 16;
     sink_config.sampling_rate = stream_conf.sink_sample_frequency_hz;
     sink_config.frame_duration = stream_conf.sink_frame_duration_us;
     sink_config.octets_per_frame = stream_conf.sink_octets_per_codec_frame;
-    // TODO: set the default value 1 for now, would change it if we need more
-    // configuration
-    sink_config.blocks_per_sdu = 1;
+    sink_config.blocks_per_sdu = stream_conf.sink_codec_frames_blocks_per_sdu;
     sink_config.peer_delay_ms = delay_ms;
-    LeAudioClientAudioSource::UpdateAudioConfigToHal(sink_config);
+    update_receiver(sink_config);
   }
 
   void UpdateActiveSinkAudioConfig(
-      const le_audio::stream_configuration& stream_conf, uint16_t delay_ms) {
+      const le_audio::stream_configuration& stream_conf, uint16_t delay_ms,
+      std::function<void(const ::le_audio::offload_config& config)>
+          update_receiver) {
     if (stream_conf.source_streams.empty()) return;
 
-    source_config.stream_map = std::move(stream_conf.source_streams);
+    if (stream_conf.source_is_initial) {
+      source_config.stream_map =
+          stream_conf.source_offloader_streams_target_allocation;
+    } else {
+      source_config.stream_map =
+          stream_conf.source_offloader_streams_current_allocation;
+    }
     // TODO: set the default value 16 for now, would change it if we support
     // mode bits_per_sample
     source_config.bits_per_sample = 16;
     source_config.sampling_rate = stream_conf.source_sample_frequency_hz;
     source_config.frame_duration = stream_conf.source_frame_duration_us;
     source_config.octets_per_frame = stream_conf.source_octets_per_codec_frame;
-    // TODO: set the default value 1 for now, would change it if we need more
-    // configuration
-    source_config.blocks_per_sdu = 1;
+    source_config.blocks_per_sdu =
+        stream_conf.source_codec_frames_blocks_per_sdu;
     source_config.peer_delay_ms = delay_ms;
-    LeAudioClientAudioSink::UpdateAudioConfigToHal(source_config);
+    update_receiver(source_config);
   }
 
   const AudioSetConfigurations* GetOffloadCodecConfig(
       types::LeAudioContextType ctx_type) {
     return &context_type_offload_config_map_[ctx_type];
+  }
+
+  const broadcast_offload_config* GetBroadcastOffloadConfig() {
+    // TODO: Need to check the offload capabilities and audio policy further
+    // Use 48_1_2 for the media quality as default by now.
+    broadcast_config.stream_map.resize(
+        LeAudioCodecConfiguration::kChannelNumberStereo);
+    broadcast_config.bits_per_sample =
+        LeAudioCodecConfiguration::kBitsPerSample16;
+    broadcast_config.sampling_rate =
+        LeAudioCodecConfiguration::kSampleRate48000;
+    broadcast_config.frame_duration =
+        LeAudioCodecConfiguration::kInterval7500Us;
+    broadcast_config.octets_per_frame = 75;
+    broadcast_config.blocks_per_sdu = 1;
+    broadcast_config.codec_bitrate = 80000;
+    broadcast_config.retransmission_number = 4;
+    broadcast_config.max_transport_latency = 60;
+    return &broadcast_config;
+  }
+
+  void UpdateBroadcastConnHandle(
+      const std::vector<uint16_t>& conn_handle,
+      std::function<void(const ::le_audio::broadcast_offload_config& config)>
+          update_receiver) {
+    LOG_ASSERT(conn_handle.size() == broadcast_config.stream_map.size());
+
+    if (broadcast_config.stream_map.size() ==
+        LeAudioCodecConfiguration::kChannelNumberStereo) {
+      broadcast_config.stream_map[0] = std::pair<uint16_t, uint32_t>{
+          conn_handle[0], codec_spec_conf::kLeAudioLocationFrontLeft};
+      broadcast_config.stream_map[1] = std::pair<uint16_t, uint32_t>{
+          conn_handle[1], codec_spec_conf::kLeAudioLocationFrontRight};
+    } else if (broadcast_config.stream_map.size() ==
+               LeAudioCodecConfiguration::kChannelNumberMono) {
+      broadcast_config.stream_map[0] = std::pair<uint16_t, uint32_t>{
+          conn_handle[0], codec_spec_conf::kLeAudioLocationFrontCenter};
+    }
+
+    update_receiver(broadcast_config);
   }
 
  private:
@@ -217,8 +269,7 @@ struct codec_manager_impl {
   }
 
   void UpdateOffloadCapability(
-      const std::vector<btle_audio_codec_config_t>& offloading_preference,
-      const std::vector<AudioSetConfiguration>& adsp_capabilities) {
+      const std::vector<btle_audio_codec_config_t>& offloading_preference) {
     LOG(INFO) << __func__;
     std::unordered_set<uint8_t> offload_preference_set;
 
@@ -226,6 +277,10 @@ struct codec_manager_impl {
       LOG(ERROR) << __func__ << " Audio set configuration provider is not available.";
       return;
     }
+
+    std::vector<::le_audio::set_configurations::AudioSetConfiguration>
+        adsp_capabilities =
+            ::bluetooth::audio::le_audio::get_offload_capabilities();
 
     for (auto codec : offloading_preference) {
       auto it = btle_audio_codec_type_map_.find(codec.codec_type);
@@ -259,6 +314,7 @@ struct codec_manager_impl {
   bool offload_enable_ = false;
   le_audio::offload_config sink_config;
   le_audio::offload_config source_config;
+  le_audio::broadcast_offload_config broadcast_config;
   std::unordered_map<types::LeAudioContextType, AudioSetConfigurations>
       context_type_offload_config_map_;
   std::unordered_map<btle_audio_codec_index_t, uint8_t>
@@ -271,12 +327,10 @@ struct CodecManager::impl {
   impl(const CodecManager& codec_manager) : codec_manager_(codec_manager) {}
 
   void Start(
-      const std::vector<btle_audio_codec_config_t>& offloading_preference,
-      const std::vector<set_configurations::AudioSetConfiguration>&
-          adsp_capabilities) {
+      const std::vector<btle_audio_codec_config_t>& offloading_preference) {
     LOG_ASSERT(!codec_manager_impl_);
-    codec_manager_impl_ = std::make_unique<codec_manager_impl>(
-        offloading_preference, adsp_capabilities);
+    codec_manager_impl_ =
+        std::make_unique<codec_manager_impl>(offloading_preference);
   }
 
   void Stop() {
@@ -293,11 +347,8 @@ struct CodecManager::impl {
 CodecManager::CodecManager() : pimpl_(std::make_unique<impl>(*this)) {}
 
 void CodecManager::Start(
-    const std::vector<btle_audio_codec_config_t>& offloading_preference,
-    const std::vector<set_configurations::AudioSetConfiguration>&
-        adsp_capabilities) {
-  if (!pimpl_->IsRunning())
-    pimpl_->Start(offloading_preference, adsp_capabilities);
+    const std::vector<btle_audio_codec_config_t>& offloading_preference) {
+  if (!pimpl_->IsRunning()) pimpl_->Start(offloading_preference);
 }
 
 void CodecManager::Stop() {
@@ -313,17 +364,21 @@ types::CodecLocation CodecManager::GetCodecLocation(void) const {
 }
 
 void CodecManager::UpdateActiveSourceAudioConfig(
-    const stream_configuration& stream_conf, uint16_t delay_ms) {
+    const stream_configuration& stream_conf, uint16_t delay_ms,
+    std::function<void(const ::le_audio::offload_config& config)>
+        update_receiver) {
   if (pimpl_->IsRunning())
-    pimpl_->codec_manager_impl_->UpdateActiveSourceAudioConfig(stream_conf,
-                                                               delay_ms);
+    pimpl_->codec_manager_impl_->UpdateActiveSourceAudioConfig(
+        stream_conf, delay_ms, update_receiver);
 }
 
 void CodecManager::UpdateActiveSinkAudioConfig(
-    const stream_configuration& stream_conf, uint16_t delay_ms) {
+    const stream_configuration& stream_conf, uint16_t delay_ms,
+    std::function<void(const ::le_audio::offload_config& config)>
+        update_receiver) {
   if (pimpl_->IsRunning())
-    pimpl_->codec_manager_impl_->UpdateActiveSinkAudioConfig(stream_conf,
-                                                             delay_ms);
+    pimpl_->codec_manager_impl_->UpdateActiveSinkAudioConfig(
+        stream_conf, delay_ms, update_receiver);
 }
 
 const AudioSetConfigurations* CodecManager::GetOffloadCodecConfig(
@@ -333,6 +388,25 @@ const AudioSetConfigurations* CodecManager::GetOffloadCodecConfig(
   }
 
   return nullptr;
+}
+
+const ::le_audio::broadcast_offload_config*
+CodecManager::GetBroadcastOffloadConfig() {
+  if (pimpl_->IsRunning()) {
+    return pimpl_->codec_manager_impl_->GetBroadcastOffloadConfig();
+  }
+
+  return nullptr;
+}
+
+void CodecManager::UpdateBroadcastConnHandle(
+    const std::vector<uint16_t>& conn_handle,
+    std::function<void(const ::le_audio::broadcast_offload_config& config)>
+        update_receiver) {
+  if (pimpl_->IsRunning()) {
+    return pimpl_->codec_manager_impl_->UpdateBroadcastConnHandle(
+        conn_handle, update_receiver);
+  }
 }
 
 }  // namespace le_audio

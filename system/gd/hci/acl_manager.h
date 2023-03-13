@@ -29,6 +29,7 @@
 #include "hci/hci_layer.h"
 #include "hci/hci_packets.h"
 #include "hci/le_address_manager.h"
+#include "hci/le_scanning_manager.h"
 #include "module.h"
 #include "os/handler.h"
 
@@ -54,9 +55,13 @@ class AclManager : public Module {
  friend class bluetooth::shim::legacy::Acl;
  friend void bluetooth::shim::L2CA_UseLegacySecurityModule();
  friend bool bluetooth::shim::L2CA_SetAclPriority(uint16_t, bool);
+ friend class bluetooth::hci::LeScanningManager;
 
 public:
  AclManager();
+ AclManager(const AclManager&) = delete;
+ AclManager& operator=(const AclManager&) = delete;
+
  // NOTE: It is necessary to forward declare a default destructor that overrides the base class one, because
  // "struct impl" is forwarded declared in .cc and compiler needs a concrete definition of "struct impl" when
  // compiling AclManager's destructor. Hence we need to forward declare the destructor for AclManager to delay
@@ -98,11 +103,15 @@ public:
  // Generates OnConnectFail with error code "terminated by local host 0x16" if cancelled, or OnConnectSuccess if not
  // successfully cancelled and already connected
  virtual void CancelConnect(Address address);
+ virtual void RemoveFromBackgroundList(AddressWithType address_with_type);
+ virtual void IsOnBackgroundList(AddressWithType address_with_type, std::promise<bool> promise);
 
  virtual void CancelLeConnect(AddressWithType address_with_type);
- virtual void AddDeviceToConnectList(AddressWithType address_with_type);
- virtual void RemoveDeviceFromConnectList(AddressWithType address_with_type);
- virtual void ClearConnectList();
+ virtual void CancelLeConnectAndRemoveFromBackgroundList(AddressWithType address_with_type);
+
+ virtual void AddDeviceToFilterAcceptList(AddressWithType address_with_type);
+ virtual void RemoveDeviceFromFilterAcceptList(AddressWithType address_with_type);
+ virtual void ClearFilterAcceptList();
 
  virtual void AddDeviceToResolvingList(
      AddressWithType address_with_type,
@@ -148,8 +157,6 @@ private:
 
  struct impl;
  std::unique_ptr<impl> pimpl_;
-
- DISALLOW_COPY_AND_ASSIGN(AclManager);
 };
 
 }  // namespace hci

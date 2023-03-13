@@ -92,9 +92,6 @@ public class MediaControlProfileTest {
         }
 
         mTargetContext = InstrumentationRegistry.getTargetContext();
-        Assume.assumeTrue("Ignore test when MCP Server is not enabled",
-                mTargetContext.getResources().getBoolean(
-                        R.bool.profile_supported_mcp_server));
         MediaControlProfile.ListCallback listCallback;
         MockitoAnnotations.initMocks(this);
 
@@ -147,11 +144,11 @@ public class MediaControlProfileTest {
 
     @After
     public void tearDown() throws Exception {
-        if (!mTargetContext.getResources().getBoolean(R.bool.profile_supported_mcp_server)) {
+        TestUtils.clearAdapterService(mAdapterService);
+
+        if (mMediaControlProfile == null) {
             return;
         }
-
-        TestUtils.clearAdapterService(mAdapterService);
 
         mMediaControlProfile.cleanup();
         mMediaControlProfile = null;
@@ -467,5 +464,10 @@ public class MediaControlProfileTest {
         testGetSupportedPlayingOrder(true, false);
         testGetSupportedPlayingOrder(false, true);
         testGetSupportedPlayingOrder(false, false);
+    }
+
+    @Test
+    public void testDumpDoesNotCrash() {
+        mMediaControlProfile.dump(new StringBuilder());
     }
 }

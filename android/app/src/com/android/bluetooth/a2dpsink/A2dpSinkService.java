@@ -23,6 +23,7 @@ import android.bluetooth.BluetoothProfile;
 import android.bluetooth.IBluetoothA2dpSink;
 import android.content.AttributionSource;
 import android.media.AudioManager;
+import android.sysprop.BluetoothProperties;
 import android.util.Log;
 
 import com.android.bluetooth.Utils;
@@ -62,6 +63,10 @@ public class A2dpSinkService extends ProfileService {
     private static A2dpSinkService sService;
 
     A2dpSinkNativeInterface mNativeInterface;
+
+    public static boolean isEnabled() {
+        return BluetoothProperties.isProfileA2dpSinkEnabled().orElse(false);
+    }
 
     @Override
     protected boolean start() {
@@ -185,14 +190,18 @@ public class A2dpSinkService extends ProfileService {
     }
 
     //Binder object: Must be static class or memory leak may occur
-    private static class A2dpSinkServiceBinder extends IBluetoothA2dpSink.Stub
+    @VisibleForTesting
+    static class A2dpSinkServiceBinder extends IBluetoothA2dpSink.Stub
             implements IProfileServiceBinder {
         private A2dpSinkService mService;
 
         @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
         private A2dpSinkService getService(AttributionSource source) {
-            if (!Utils.checkCallerIsSystemOrActiveUser(TAG)
-                    || !Utils.checkServiceAvailable(mService, TAG)
+            if (Utils.isInstrumentationTestMode()) {
+                return mService;
+            }
+            if (!Utils.checkServiceAvailable(mService, TAG)
+                    || !Utils.checkCallerIsSystemOrActiveOrManagedUser(mService, TAG)
                     || !Utils.checkConnectPermissionForDataDelivery(mService, source, TAG)) {
                 return null;
             }

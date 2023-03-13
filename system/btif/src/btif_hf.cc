@@ -1075,9 +1075,10 @@ bt_status_t HeadsetInterface::ClccResponse(
   if (index == 0) {
     ag_res.ok_flag = BTA_AG_OK_DONE;
   } else {
+    std::string cell_number(number ? number : "");
     BTIF_TRACE_EVENT(
         "clcc_response: [%d] dir %d state %d mode %d number = %s type = %d",
-        index, dir, state, mode, number, type);
+        index, dir, state, mode, PRIVATE_CELL(cell_number), type);
     int res_strlen = snprintf(ag_res.str, sizeof(ag_res.str), "%d,%d,%d,%d,%d",
                               index, dir, state, mode, mpty);
     if (number) {
@@ -1089,7 +1090,6 @@ bt_status_t HeadsetInterface::ClccResponse(
       }
       for (size_t i = 0; number[i] != 0; i++) {
         if (newidx >= (sizeof(dialnum) - res_strlen - 1)) {
-          android_errorWriteLog(0x534e4554, "79266386");
           break;
         }
         if (utl_isdialchar(number[i])) {
@@ -1262,7 +1262,6 @@ bt_status_t HeadsetInterface::PhoneStateChange(
               13 + static_cast<int>(number_str.length() + name_str.length()) -
               static_cast<int>(sizeof(ag_res.str));
           if (overflow_size > 0) {
-            android_errorWriteLog(0x534e4554, "79431031");
             int extra_overflow_size =
                 overflow_size - static_cast<int>(name_str.length());
             if (extra_overflow_size > 0) {

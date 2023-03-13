@@ -44,6 +44,7 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -70,7 +71,7 @@ public class HeadsetClientServiceTest {
     public void setUp() throws Exception {
         mTargetContext = InstrumentationRegistry.getTargetContext();
         Assume.assumeTrue("Ignore test when HeadsetClientService is not enabled",
-                mTargetContext.getResources().getBoolean(R.bool.profile_supported_hfpclient));
+                HeadsetClientService.isEnabled());
         MockitoAnnotations.initMocks(this);
         TestUtils.setAdapterService(mAdapterService);
         doReturn(mDatabaseManager).when(mAdapterService).getDatabase();
@@ -86,7 +87,7 @@ public class HeadsetClientServiceTest {
 
     @After
     public void tearDown() throws Exception {
-        if (!mTargetContext.getResources().getBoolean(R.bool.profile_supported_hfpclient)) {
+        if (!HeadsetClientService.isEnabled()) {
             return;
         }
         TestUtils.stopService(mServiceRule, HeadsetClientService.class);
@@ -100,6 +101,7 @@ public class HeadsetClientServiceTest {
         Assert.assertNotNull(HeadsetClientService.getHeadsetClientService());
     }
 
+    @Ignore("b/260202548")
     @Test
     public void testSendBIEVtoStateMachineWhenBatteryChanged() {
         // Put mock state machine
@@ -135,5 +137,15 @@ public class HeadsetClientServiceTest {
                     eq(HeadsetClientStateMachine.SEND_BIEV),
                     eq(2),
                     anyInt());
+    }
+
+    @Test
+    public void testDumpDoesNotCrash() {
+        // Put mock state machine
+        BluetoothDevice device =
+                BluetoothAdapter.getDefaultAdapter().getRemoteDevice("00:01:02:03:04:05");
+        mService.getStateMachineMap().put(device, mStateMachine);
+
+        mService.dump(new StringBuilder());
     }
 }

@@ -27,12 +27,16 @@
 #include "common/circular_buffer.h"
 #include "common/init_flags.h"
 #include "common/strings.h"
+#include "os/fake_timer/fake_timerfd.h"
 #include "os/files.h"
 #include "os/log.h"
 #include "os/parameter_provider.h"
 #include "os/system_properties.h"
 
 namespace bluetooth {
+#ifdef USE_FAKE_TIMERS
+using os::fake_timer::fake_timerfd_get_clock;
+#endif
 namespace hal {
 
 namespace {
@@ -67,15 +71,14 @@ constexpr SnoopLogger::FileHeaderType kBtSnoopFileHeader = {
 // the relevant system property
 constexpr size_t kDefaultBtSnoopMaxPacketsPerFile = 0xffff;
 
-// We want to use at most 256 KB memory for btsnooz log
-constexpr size_t kDefaultBtsnoozMaxMemoryUsageBytes = 256 * 1024;
 // We restrict the maximum packet size to 150 bytes
 constexpr size_t kDefaultBtSnoozMaxBytesPerPacket = 150;
 constexpr size_t kDefaultBtSnoozMaxPayloadBytesPerPacket =
     kDefaultBtSnoozMaxBytesPerPacket - sizeof(SnoopLogger::PacketHeaderType);
-// Calculate max number of packets based on max memory usage and max packet size
-constexpr size_t kDefaultBtSnoozMaxPacketsPerBuffer =
-    kDefaultBtsnoozMaxMemoryUsageBytes / kDefaultBtSnoozMaxBytesPerPacket;
+
+using namespace std::chrono_literals;
+constexpr std::chrono::hours kBtSnoozLogLifeTime = 12h;
+constexpr std::chrono::hours kBtSnoozLogDeleteRepeatingAlarmInterval = 1h;
 
 std::string get_btsnoop_log_path(std::string log_dir, bool filtered) {
   if (filtered) {
@@ -107,11 +110,34 @@ void delete_btsnoop_files(const std::string& log_path) {
   }
 }
 
-size_t get_btsnooz_packet_length_to_write(const HciPacket& packet, SnoopLogger::PacketType type) {
+void delete_old_btsnooz_files(const std::string& log_path, const std::chrono::milliseconds log_life_time) {
+  auto opt_created_ts = os::FileCreatedTime(log_path);
+  if (!opt_created_ts) return;
+#ifdef USE_FAKE_TIMERS
+  auto diff = fake_timerfd_get_clock() - file_creation_time;
+  uint64_t log_lifetime = log_life_time.count();
+  if (diff >= log_lifetime) {
+#else
+  using namespace std::chrono;
+  auto created_tp = opt_created_ts.value();
+  auto current_tp = std::chrono::system_clock::now();
+
+  auto diff = duration_cast<milliseconds>(current_tp - created_tp);
+  if (diff >= log_life_time) {
+#endif
+    delete_btsnoop_files(log_path);
+  }
+}
+
+size_t get_btsnooz_packet_length_to_write(
+    const HciPacket& packet, SnoopLogger::PacketType type, bool qualcomm_debug_log_enabled) {
   static const size_t kAclHeaderSize = 4;
   static const size_t kL2capHeaderSize = 4;
   static const size_t kL2capCidOffset = (kAclHeaderSize + 2);
   static const uint16_t kL2capSignalingCid = 0x0001;
+
+  static const size_t kHciAclHandleOffset = 0;
+  static const uint16_t kQualcommDebugLogHandle = 0xedc;
 
   // Maximum amount of ACL data to log.
   // Enough for an RFCOMM frame up to the frame check;
@@ -134,10 +160,17 @@ size_t get_btsnooz_packet_length_to_write(const HciPacket& packet, SnoopLogger::
         uint16_t l2cap_cid =
             static_cast<uint16_t>(packet[kL2capCidOffset]) |
             static_cast<uint16_t>((static_cast<uint16_t>(packet[kL2capCidOffset + 1]) << static_cast<uint16_t>(8)));
+        uint16_t hci_acl_packet_handle =
+            static_cast<uint16_t>(packet[kHciAclHandleOffset]) |
+            static_cast<uint16_t>((static_cast<uint16_t>(packet[kHciAclHandleOffset + 1]) << static_cast<uint16_t>(8)));
+        hci_acl_packet_handle &= 0x0fff;
+
         if (l2cap_cid == kL2capSignalingCid) {
           // For the signaling CID, take the full packet.
           // That way, the PSM setup is captured, allowing decoding of PSMs down
           // the road.
+          return packet.size();
+        } else if (qualcomm_debug_log_enabled && hci_acl_packet_handle == kQualcommDebugLogHandle) {
           return packet.size();
         } else {
           // Otherwise, return as much as we reasonably can
@@ -162,21 +195,30 @@ size_t get_btsnooz_packet_length_to_write(const HciPacket& packet, SnoopLogger::
 const std::string SnoopLogger::kBtSnoopLogModeDisabled = "disabled";
 const std::string SnoopLogger::kBtSnoopLogModeFiltered = "filtered";
 const std::string SnoopLogger::kBtSnoopLogModeFull = "full";
+const std::string SnoopLogger::kSoCManufacturerQualcomm = "Qualcomm";
 
 const std::string SnoopLogger::kBtSnoopMaxPacketsPerFileProperty = "persist.bluetooth.btsnoopsize";
 const std::string SnoopLogger::kIsDebuggableProperty = "ro.debuggable";
 const std::string SnoopLogger::kBtSnoopLogModeProperty = "persist.bluetooth.btsnooplogmode";
 const std::string SnoopLogger::kBtSnoopDefaultLogModeProperty = "persist.bluetooth.btsnoopdefaultmode";
+const std::string SnoopLogger::kSoCManufacturerProperty = "ro.soc.manufacturer";
 
 SnoopLogger::SnoopLogger(
     std::string snoop_log_path,
     std::string snooz_log_path,
     size_t max_packets_per_file,
-    const std::string& btsnoop_mode)
+    size_t max_packets_per_buffer,
+    const std::string& btsnoop_mode,
+    bool qualcomm_debug_log_enabled,
+    const std::chrono::milliseconds snooz_log_life_time,
+    const std::chrono::milliseconds snooz_log_delete_alarm_interval)
     : snoop_log_path_(std::move(snoop_log_path)),
       snooz_log_path_(std::move(snooz_log_path)),
       max_packets_per_file_(max_packets_per_file),
-      btsnooz_buffer_(kDefaultBtSnoozMaxPacketsPerBuffer) {
+      btsnooz_buffer_(max_packets_per_buffer),
+      qualcomm_debug_log_enabled_(qualcomm_debug_log_enabled),
+      snooz_log_life_time_(snooz_log_life_time),
+      snooz_log_delete_alarm_interval_(snooz_log_delete_alarm_interval) {
   if (false && btsnoop_mode == kBtSnoopLogModeFiltered) {
     // TODO(b/163733538): implement filtered snoop log in GD, currently filtered == disabled
     LOG_INFO("Filtered Snoop Logs enabled");
@@ -235,6 +277,9 @@ void SnoopLogger::OpenNextSnoopLogFile() {
   mode_t prevmask = umask(0);
   // do not use std::ios::app as we want override the existing file
   btsnoop_ostream_.open(snoop_log_path_, std::ios::binary | std::ios::out);
+#ifdef USE_FAKE_TIMERS
+  file_creation_time = fake_timerfd_get_clock();
+#endif
   if (!btsnoop_ostream_.good()) {
     LOG_ALWAYS_FATAL("Unable to open snoop log at \"%s\", error: \"%s\"", snoop_log_path_.c_str(), strerror(errno));
   }
@@ -280,7 +325,7 @@ void SnoopLogger::Capture(const HciPacket& packet, Direction direction, PacketTy
     if (!is_enabled_) {
       // btsnoop disabled, log in-memory btsnooz log only
       std::stringstream ss;
-      size_t included_length = get_btsnooz_packet_length_to_write(packet, type);
+      size_t included_length = get_btsnooz_packet_length_to_write(packet, type, qualcomm_debug_log_enabled_);
       header.length_captured = htonl(included_length + /* type byte */ 1);
       if (!ss.write(reinterpret_cast<const char*>(&header), sizeof(PacketHeaderType))) {
         LOG_ERROR("Failed to write packet header for btsnooz, error: \"%s\"", strerror(errno));
@@ -360,14 +405,20 @@ void SnoopLogger::Start() {
   if (is_enabled_) {
     OpenNextSnoopLogFile();
   }
+  alarm_ = std::make_unique<os::RepeatingAlarm>(GetHandler());
+  alarm_->Schedule(
+      common::Bind(&delete_old_btsnooz_files, snooz_log_path_, snooz_log_life_time_), snooz_log_delete_alarm_interval_);
 }
 
 void SnoopLogger::Stop() {
   std::lock_guard<std::recursive_mutex> lock(file_mutex_);
-  LOG_DEBUG("Dumping btsnooz log data to %s", snooz_log_path_.c_str());
-  DumpSnoozLogToFile(btsnooz_buffer_.Drain());
   LOG_DEBUG("Closing btsnoop log data at %s", snoop_log_path_.c_str());
   CloseCurrentSnoopLogFile();
+  // Cancel the alarm
+  alarm_->Cancel();
+  alarm_.reset();
+  // delete any existing snooz logs
+  delete_btsnoop_files(snooz_log_path_);
 }
 
 DumpsysDataFinisher SnoopLogger::GetDumpsysData(flatbuffers::FlatBufferBuilder* builder) const {
@@ -389,6 +440,16 @@ size_t SnoopLogger::GetMaxPacketsPerFile() {
     }
   }
   return max_packets_per_file;
+}
+
+size_t SnoopLogger::GetMaxPacketsPerBuffer() {
+  // We want to use at most 256 KB memory for btsnooz log for release builds
+  // and 512 KB memory for userdebug/eng builds
+  auto is_debuggable = os::GetSystemProperty(kIsDebuggableProperty);
+  size_t btsnooz_max_memory_usage_bytes =
+      ((is_debuggable.has_value() && common::StringTrim(is_debuggable.value()) == "1") ? 1024 : 256) * 1024;
+  // Calculate max number of packets based on max memory usage and max packet size
+  return btsnooz_max_memory_usage_bytes / kDefaultBtSnoozMaxBytesPerPacket;
 }
 
 std::string SnoopLogger::GetBtSnoopMode() {
@@ -416,12 +477,27 @@ std::string SnoopLogger::GetBtSnoopMode() {
   return btsnoop_mode;
 }
 
+bool SnoopLogger::IsQualcommDebugLogEnabled() {
+  // Check system prop if the soc manufacturer is Qualcomm
+  bool qualcomm_debug_log_enabled = false;
+  {
+    auto soc_manufacturer_prop = os::GetSystemProperty(kSoCManufacturerProperty);
+    qualcomm_debug_log_enabled = soc_manufacturer_prop.has_value() &&
+                                 common::StringTrim(soc_manufacturer_prop.value()) == kSoCManufacturerQualcomm;
+  }
+  return qualcomm_debug_log_enabled;
+}
+
 const ModuleFactory SnoopLogger::Factory = ModuleFactory([]() {
   return new SnoopLogger(
       os::ParameterProvider::SnoopLogFilePath(),
       os::ParameterProvider::SnoozLogFilePath(),
       GetMaxPacketsPerFile(),
-      GetBtSnoopMode());
+      GetMaxPacketsPerBuffer(),
+      GetBtSnoopMode(),
+      IsQualcommDebugLogEnabled(),
+      kBtSnoozLogLifeTime,
+      kBtSnoozLogDeleteRepeatingAlarmInterval);
 });
 
 }  // namespace hal

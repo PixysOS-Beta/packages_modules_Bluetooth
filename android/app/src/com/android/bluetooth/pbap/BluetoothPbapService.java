@@ -55,6 +55,7 @@ import android.os.Message;
 import android.os.PowerManager;
 import android.os.UserHandle;
 import android.os.UserManager;
+import android.sysprop.BluetoothProperties;
 import android.telephony.TelephonyManager;
 import android.util.Log;
 
@@ -86,7 +87,12 @@ public class BluetoothPbapService extends ProfileService implements IObexConnect
 
     public static final boolean DEBUG = true;
 
-    public static final boolean VERBOSE = false;
+    public static final boolean VERBOSE = Log.isLoggable(TAG, Log.VERBOSE);
+
+    /**
+     * The component name of the owned BluetoothPbapActivity
+     */
+    private static final String PBAP_ACTIVITY = BluetoothPbapActivity.class.getCanonicalName();
 
     /**
      * Intent indicating incoming obex authentication request which is from
@@ -119,7 +125,6 @@ public class BluetoothPbapService extends ProfileService implements IObexConnect
      */
     static final String EXTRA_SESSION_KEY = "com.android.bluetooth.pbap.sessionkey";
     static final String EXTRA_DEVICE = "com.android.bluetooth.pbap.device";
-    static final String THIS_PACKAGE_NAME = "com.android.bluetooth";
 
     static final int MSG_ACQUIRE_WAKE_LOCK = 5004;
     static final int MSG_RELEASE_WAKE_LOCK = 5005;
@@ -161,7 +166,8 @@ public class BluetoothPbapService extends ProfileService implements IObexConnect
 
     private PbapHandler mSessionStatusHandler;
     private HandlerThread mHandlerThread;
-    private final HashMap<BluetoothDevice, PbapStateMachine> mPbapStateMachineMap = new HashMap<>();
+    @VisibleForTesting
+    final HashMap<BluetoothDevice, PbapStateMachine> mPbapStateMachineMap = new HashMap<>();
     private volatile int mNextNotificationId = PBAP_NOTIFICATION_ID_START;
 
     // package and class name to which we send intent to check phone book access permission
@@ -175,6 +181,10 @@ public class BluetoothPbapService extends ProfileService implements IObexConnect
     private Thread mThreadUpdateSecVersionCounter;
 
     private static BluetoothPbapService sBluetoothPbapService;
+
+    public static boolean isEnabled() {
+        return BluetoothProperties.isProfilePbapServerEnabled().orElse(false);
+    }
 
     private class BluetoothPbapContentObserver extends ContentObserver {
         BluetoothPbapContentObserver() {
@@ -267,7 +277,8 @@ public class BluetoothPbapService extends ProfileService implements IObexConnect
         }
     }
 
-    private BroadcastReceiver mPbapReceiver = new BroadcastReceiver() {
+    @VisibleForTesting
+    BroadcastReceiver mPbapReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
             parseIntent(intent);
@@ -437,10 +448,6 @@ public class BluetoothPbapService extends ProfileService implements IObexConnect
     public int getConnectionState(BluetoothDevice device) {
         enforceCallingOrSelfPermission(
                 BLUETOOTH_PRIVILEGED, "Need BLUETOOTH_PRIVILEGED permission");
-        if (mPbapStateMachineMap == null) {
-            return BluetoothProfile.STATE_DISCONNECTED;
-        }
-
         synchronized (mPbapStateMachineMap) {
             PbapStateMachine sm = mPbapStateMachineMap.get(device);
             if (sm == null) {
@@ -451,9 +458,6 @@ public class BluetoothPbapService extends ProfileService implements IObexConnect
     }
 
     List<BluetoothDevice> getConnectedDevices() {
-        if (mPbapStateMachineMap == null) {
-            return new ArrayList<>();
-        }
         synchronized (mPbapStateMachineMap) {
             return new ArrayList<>(mPbapStateMachineMap.keySet());
         }
@@ -461,7 +465,7 @@ public class BluetoothPbapService extends ProfileService implements IObexConnect
 
     List<BluetoothDevice> getDevicesMatchingConnectionStates(int[] states) {
         List<BluetoothDevice> devices = new ArrayList<>();
-        if (mPbapStateMachineMap == null || states == null) {
+        if (states == null) {
             return devices;
         }
         synchronized (mPbapStateMachineMap) {
@@ -545,6 +549,11 @@ public class BluetoothPbapService extends ProfileService implements IObexConnect
         return sLocalPhoneNum;
     }
 
+    @VisibleForTesting
+    static void setLocalPhoneName(String localPhoneName) {
+        sLocalPhoneName = localPhoneName;
+    }
+
     static String getLocalPhoneName() {
         return sLocalPhoneName;
     }
@@ -561,6 +570,9 @@ public class BluetoothPbapService extends ProfileService implements IObexConnect
         }
         mDatabaseManager = Objects.requireNonNull(AdapterService.getAdapterService().getDatabase(),
             "DatabaseManager cannot be null when PbapService starts");
+
+        // Enable owned Activity component
+        setComponentAvailable(PBAP_ACTIVITY, true);
 
         mContext = this;
         mContactsLoaded = false;
@@ -613,6 +625,8 @@ public class BluetoothPbapService extends ProfileService implements IObexConnect
         unregisterReceiver(mPbapReceiver);
         getContentResolver().unregisterContentObserver(mContactChangeObserver);
         mContactChangeObserver = null;
+        setComponentAvailable(PBAP_ACTIVITY, false);
+        mPbapStateMachineMap.clear();
         return true;
     }
 
@@ -656,13 +670,17 @@ public class BluetoothPbapService extends ProfileService implements IObexConnect
         sendUpdateRequest();
     }
 
-    private static class PbapBinder extends IBluetoothPbap.Stub implements IProfileServiceBinder {
+    @VisibleForTesting
+    static class PbapBinder extends IBluetoothPbap.Stub implements IProfileServiceBinder {
         private BluetoothPbapService mService;
 
         @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
         private BluetoothPbapService getService(AttributionSource source) {
-            if (!Utils.checkCallerIsSystemOrActiveUser(TAG)
-                    || !Utils.checkServiceAvailable(mService, TAG)
+            if (Utils.isInstrumentationTestMode()) {
+                return mService;
+            }
+            if (!Utils.checkServiceAvailable(mService, TAG)
+                    || !Utils.checkCallerIsSystemOrActiveOrManagedUser(mService, TAG)
                     || !Utils.checkConnectPermissionForDataDelivery(mService, source, TAG)) {
                 return null;
             }

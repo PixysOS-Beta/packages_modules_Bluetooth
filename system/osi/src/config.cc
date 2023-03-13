@@ -219,7 +219,6 @@ void config_set_string(config_t* config, const std::string& section,
   std::string value_no_newline;
   size_t newline_position = value.find('\n');
   if (newline_position != std::string::npos) {
-    android_errorWriteLog(0x534e4554, "70808273");
     value_no_newline = value.substr(0, newline_position);
   } else {
     value_no_newline = value;
@@ -495,8 +494,8 @@ static bool config_parse(FILE* fp, config_t* config) {
   CHECK(config != nullptr);
 
   int line_num = 0;
-  char line[1024];
-  char section[1024];
+  char line[4096];
+  char section[4096];
   strcpy(section, CONFIG_DEFAULT_SECTION);
 
   while (fgets(line, sizeof(line), fp)) {
@@ -513,7 +512,7 @@ static bool config_parse(FILE* fp, config_t* config) {
                 << line_num;
         return false;
       }
-      strncpy(section, line_ptr + 1, len - 2);  // NOLINT (len < 1024)
+      strncpy(section, line_ptr + 1, len - 2);  // NOLINT (len < 4096)
       section[len - 2] = '\0';
     } else {
       char* split = strchr(line_ptr, '=');

@@ -35,6 +35,7 @@ import android.os.IBinder;
 import android.os.Message;
 import android.os.Process;
 import android.os.RemoteException;
+import android.sysprop.BluetoothProperties;
 import android.util.Log;
 
 import com.android.bluetooth.BluetoothMetricsProto;
@@ -84,6 +85,10 @@ public class HidDeviceService extends ProfileService {
     private ActivityManager mActivityManager;
 
     private HidDeviceServiceHandler mHandler;
+
+    public static boolean isEnabled() {
+        return BluetoothProperties.isProfileHidDeviceEnabled().orElse(false);
+    }
 
     private class HidDeviceServiceHandler extends Handler {
         @Override
@@ -301,8 +306,11 @@ public class HidDeviceService extends ProfileService {
 
         @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
         private HidDeviceService getService(AttributionSource source) {
-            if (!Utils.checkCallerIsSystemOrActiveUser(TAG)
-                    || !Utils.checkServiceAvailable(mService, TAG)
+            if (Utils.isInstrumentationTestMode()) {
+                return mService;
+            }
+            if (!Utils.checkServiceAvailable(mService, TAG)
+                    || !Utils.checkCallerIsSystemOrActiveOrManagedUser(mService, TAG)
                     || !Utils.checkConnectPermissionForDataDelivery(mService, source, TAG)) {
                 return null;
             }
@@ -822,7 +830,8 @@ public class HidDeviceService extends ProfileService {
         return sHidDeviceService;
     }
 
-    private static synchronized void setHidDeviceService(HidDeviceService instance) {
+    @VisibleForTesting
+    static synchronized void setHidDeviceService(HidDeviceService instance) {
         if (DBG) {
             Log.d(TAG, "setHidDeviceService(): set to: " + instance);
         }

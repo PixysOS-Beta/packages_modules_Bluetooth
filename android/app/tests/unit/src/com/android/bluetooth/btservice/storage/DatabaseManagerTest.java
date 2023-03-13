@@ -381,6 +381,12 @@ public final class DatabaseManagerTest {
         testSetGetCustomMetaCase(false,
                 BluetoothDevice.METADATA_UNTETHERED_CASE_LOW_BATTERY_THRESHOLD,
                 value, true);
+        testSetGetCustomMetaCase(false, BluetoothDevice.METADATA_SPATIAL_AUDIO,
+                value, true);
+        testSetGetCustomMetaCase(false, BluetoothDevice.METADATA_FAST_PAIR_CUSTOMIZED_FIELDS,
+                value, true);
+        testSetGetCustomMetaCase(false, BluetoothDevice.METADATA_LE_AUDIO,
+                value, true);
         testSetGetCustomMetaCase(false, badKey, value, false);
 
         // Device is in database
@@ -434,6 +440,12 @@ public final class DatabaseManagerTest {
                 value, true);
         testSetGetCustomMetaCase(true,
                 BluetoothDevice.METADATA_UNTETHERED_CASE_LOW_BATTERY_THRESHOLD,
+                value, true);
+        testSetGetCustomMetaCase(true, BluetoothDevice.METADATA_SPATIAL_AUDIO,
+                value, true);
+        testSetGetCustomMetaCase(true, BluetoothDevice.METADATA_FAST_PAIR_CUSTOMIZED_FIELDS,
+                value, true);
+        testSetGetCustomMetaCase(true, BluetoothDevice.METADATA_LE_AUDIO,
                 value, true);
     }
 
@@ -1125,6 +1137,75 @@ public final class DatabaseManagerTest {
         while (cursor.moveToNext()) {
             // Check the new columns was added with default value
             assertColumnIntData(cursor, "hap_client_connection_policy", 100);
+        }
+    }
+
+    @Test
+    public void testDatabaseMigration_111_112() throws IOException {
+        String testString = "TEST STRING";
+        // Create a database with version 109
+        SupportSQLiteDatabase db = testHelper.createDatabase(DB_NAME, 111);
+        // insert a device to the database
+        ContentValues device = new ContentValues();
+        device.put("address", TEST_BT_ADDR);
+        device.put("migrated", false);
+        assertThat(db.insert("metadata", SQLiteDatabase.CONFLICT_IGNORE, device),
+                CoreMatchers.not(-1));
+        // Migrate database from 111 to 112
+        db.close();
+        db = testHelper.runMigrationsAndValidate(DB_NAME, 112, true,
+                MetadataDatabase.MIGRATION_111_112);
+        Cursor cursor = db.query("SELECT * FROM metadata");
+        assertHasColumn(cursor, "battery_connection_policy", true);
+        while (cursor.moveToNext()) {
+            // Check the new columns was added with default value
+            assertColumnIntData(cursor, "battery_connection_policy", 100);
+        }
+    }
+
+    @Test
+    public void testDatabaseMigration_112_113() throws IOException {
+        // Create a database with version 112
+        SupportSQLiteDatabase db = testHelper.createDatabase(DB_NAME, 112);
+        // insert a device to the database
+        ContentValues device = new ContentValues();
+        device.put("address", TEST_BT_ADDR);
+        device.put("migrated", false);
+        assertThat(db.insert("metadata", SQLiteDatabase.CONFLICT_IGNORE, device),
+                CoreMatchers.not(-1));
+        // Migrate database from 112 to 113
+        db.close();
+        db = testHelper.runMigrationsAndValidate(DB_NAME, 113, true,
+                MetadataDatabase.MIGRATION_112_113);
+        Cursor cursor = db.query("SELECT * FROM metadata");
+        assertHasColumn(cursor, "spatial_audio", true);
+        assertHasColumn(cursor, "fastpair_customized", true);
+        while (cursor.moveToNext()) {
+            // Check the new columns was added with default value
+            assertColumnBlobData(cursor, "spatial_audio", null);
+            assertColumnBlobData(cursor, "fastpair_customized", null);
+        }
+    }
+
+    @Test
+    public void testDatabaseMigration_113_114() throws IOException {
+        // Create a database with version 112
+        SupportSQLiteDatabase db = testHelper.createDatabase(DB_NAME, 113);
+        // insert a device to the database
+        ContentValues device = new ContentValues();
+        device.put("address", TEST_BT_ADDR);
+        device.put("migrated", false);
+        assertThat(db.insert("metadata", SQLiteDatabase.CONFLICT_IGNORE, device),
+                CoreMatchers.not(-1));
+        // Migrate database from 113 to 114
+        db.close();
+        db = testHelper.runMigrationsAndValidate(DB_NAME, 114, true,
+                MetadataDatabase.MIGRATION_113_114);
+        Cursor cursor = db.query("SELECT * FROM metadata");
+        assertHasColumn(cursor, "le_audio", true);
+        while (cursor.moveToNext()) {
+            // Check the new columns was added with default value
+            assertColumnBlobData(cursor, "le_audio", null);
         }
     }
 

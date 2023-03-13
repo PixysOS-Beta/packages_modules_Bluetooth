@@ -33,11 +33,13 @@
 #include <string>
 
 #include "device/include/controller.h"  // TODO Remove
+#include "gd/common/init_flags.h"
 #include "main/shim/shim.h"
 #include "osi/include/allocator.h"
 #include "osi/include/log.h"
 #include "stack/btm/btm_sec.h"
 #include "stack/include/bt_hdr.h"
+#include "stack/include/btu.h"  // do_in_main_thread
 #include "stack/include/l2c_api.h"
 #include "stack/l2cap/l2c_int.h"
 #include "types/raw_address.h"
@@ -563,7 +565,16 @@ uint16_t L2CA_ConnectLECocReq(uint16_t psm, const RawAddress& p_bd_addr,
   if (p_lcb->link_state == LST_CONNECTED) {
     if (p_ccb->p_lcb->transport == BT_TRANSPORT_LE) {
       L2CAP_TRACE_DEBUG("%s LE Link is up", __func__);
-      l2c_csm_execute(p_ccb, L2CEVT_L2CA_CONNECT_REQ, NULL);
+      // post this asynchronously to avoid out-of-order callback invocation
+      // should this operation fail
+      if (bluetooth::common::init_flags::
+              asynchronously_start_l2cap_coc_is_enabled()) {
+        do_in_main_thread(FROM_HERE,
+                          base::Bind(&l2c_csm_execute, base::Unretained(p_ccb),
+                                     L2CEVT_L2CA_CONNECT_REQ, nullptr));
+      } else {
+        l2c_csm_execute(p_ccb, L2CEVT_L2CA_CONNECT_REQ, NULL);
+      }
     }
   }
 
@@ -617,6 +628,34 @@ bool L2CA_GetPeerLECocConfig(uint16_t lcid, tL2CAP_LE_CFG_INFO* peer_cfg) {
     memcpy(peer_cfg, &p_ccb->peer_conn_cfg, sizeof(tL2CAP_LE_CFG_INFO));
 
   return true;
+}
+
+/*******************************************************************************
+ *
+ *  Function         L2CA_GetPeerLECocCredit
+ *
+ *  Description      Get peers current credit for LE Connection Oriented
+ *                   Channel.
+ *
+ *  Return value:    Number of the peer current credit
+ *
+ ******************************************************************************/
+uint16_t L2CA_GetPeerLECocCredit(const RawAddress& bd_addr, uint16_t lcid) {
+  /* First, find the link control block */
+  tL2C_LCB* p_lcb = l2cu_find_lcb_by_bd_addr(bd_addr, BT_TRANSPORT_LE);
+  if (p_lcb == NULL) {
+    /* No link. Get an LCB and start link establishment */
+    L2CAP_TRACE_WARNING("%s no LCB", __func__);
+    return L2CAP_LE_CREDIT_MAX;
+  }
+
+  tL2C_CCB* p_ccb = l2cu_find_ccb_by_cid(p_lcb, lcid);
+  if (p_ccb == NULL) {
+    L2CAP_TRACE_ERROR("%s No CCB for CID:0x%04x", __func__, lcid);
+    return L2CAP_LE_CREDIT_MAX;
+  }
+
+  return p_ccb->peer_conn_cfg.credits;
 }
 
 /*******************************************************************************
@@ -752,9 +791,21 @@ std::vector<uint16_t> L2CA_ConnectCreditBasedReq(uint16_t psm,
 
   L2CAP_TRACE_DEBUG("%s LE Link is up", __func__);
 
+  /* Check if there is no ongoing connection request */
+  if (p_lcb->pending_ecoc_conn_cnt > 0) {
+    LOG_WARN("There is ongoing connection request, PSM: 0x%04x", psm);
+    return allocated_cids;
+  }
+
   tL2C_CCB* p_ccb_primary;
 
-  for (int i = 0; i < 5; i++) {
+  /* Make sure user set proper value for number of cids */
+  if (p_cfg->number_of_channels > L2CAP_CREDIT_BASED_MAX_CIDS ||
+      p_cfg->number_of_channels == 0) {
+    p_cfg->number_of_channels = L2CAP_CREDIT_BASED_MAX_CIDS;
+  }
+
+  for (int i = 0; i < p_cfg->number_of_channels; i++) {
     /* Allocate a channel control block */
     tL2C_CCB* p_ccb = l2cu_allocate_ccb(p_lcb, 0);
     if (p_ccb == NULL) {
@@ -803,8 +854,8 @@ std::vector<uint16_t> L2CA_ConnectCreditBasedReq(uint16_t psm,
  *
  *  Description      Start reconfigure procedure on Connection Oriented Channel.
  *
- *  Parameters:      Vector of channels for which configuration should be changed
- *                   New local channel configuration
+ *  Parameters:      Vector of channels for which configuration should be
+ *changed New local channel configuration
  *
  *  Return value:    true if peer is connected
  *
@@ -995,6 +1046,29 @@ uint8_t L2CA_SetTraceLevel(uint8_t new_level) {
 
 /*******************************************************************************
  *
+ * Function         L2CA_UseLatencyMode
+ *
+ * Description      Sets acl use latency mode.
+ *
+ * Returns          true if a valid channel, else false
+ *
+ ******************************************************************************/
+bool L2CA_UseLatencyMode(const RawAddress& bd_addr, bool use_latency_mode) {
+  /* Find the link control block for the acl channel */
+  tL2C_LCB* p_lcb = l2cu_find_lcb_by_bd_addr(bd_addr, BT_TRANSPORT_BR_EDR);
+  if (p_lcb == nullptr) {
+    LOG_WARN("L2CAP - no LCB for L2CA_SetUseLatencyMode, BDA: %s",
+             bd_addr.ToString().c_str());
+    return false;
+  }
+  LOG_INFO("BDA: %s, use_latency_mode: %s", bd_addr.ToString().c_str(),
+           use_latency_mode ? "true" : "false");
+  p_lcb->use_latency_mode = use_latency_mode;
+  return true;
+}
+
+/*******************************************************************************
+ *
  * Function         L2CA_SetAclPriority
  *
  * Description      Sets the transmission priority for a channel.
@@ -1012,6 +1086,21 @@ bool L2CA_SetAclPriority(const RawAddress& bd_addr, tL2CAP_PRIORITY priority) {
   VLOG(1) << __func__ << " BDA: " << bd_addr
           << ", priority: " << std::to_string(priority);
   return (l2cu_set_acl_priority(bd_addr, priority, false));
+}
+
+/*******************************************************************************
+ *
+ * Function         L2CA_SetAclLatency
+ *
+ * Description      Sets the transmission latency for a channel.
+ *
+ * Returns          true if a valid channel, else false
+ *
+ ******************************************************************************/
+bool L2CA_SetAclLatency(const RawAddress& bd_addr, tL2CAP_LATENCY latency) {
+  LOG_INFO("BDA: %s, latency: %s", bd_addr.ToString().c_str(),
+           std::to_string(latency).c_str());
+  return l2cu_set_acl_latency(bd_addr, latency);
 }
 
 /*******************************************************************************
@@ -1469,6 +1558,16 @@ bool L2CA_SetLeGattTimeout(const RawAddress& rem_bda, uint16_t idle_tout) {
   return true;
 }
 
+bool L2CA_MarkLeLinkAsActive(const RawAddress& rem_bda) {
+  tL2C_LCB* p_lcb = l2cu_find_lcb_by_bd_addr(rem_bda, BT_TRANSPORT_LE);
+  if (p_lcb == NULL) {
+    return false;
+  }
+  LOG(INFO) << __func__ << "setting link to " << rem_bda << " as active";
+  p_lcb->with_active_local_clients = true;
+  return true;
+}
+
 /*******************************************************************************
  *
  * Function         L2CA_DataWrite
@@ -1576,7 +1675,9 @@ uint16_t L2CA_FlushChannel(uint16_t lcid, uint16_t num_to_flush) {
   /* Cannot flush eRTM buffers once they have a sequence number */
   if (p_ccb->peer_cfg.fcr.mode != L2CAP_FCR_ERTM_MODE) {
     const controller_t* controller = controller_get_interface();
-    if (num_to_flush != L2CAP_FLUSH_CHANS_GET) {
+    // Don't need send enhanced_flush to controller if it is LE transport.
+    if (p_lcb->transport != BT_TRANSPORT_LE &&
+        num_to_flush != L2CAP_FLUSH_CHANS_GET) {
       /* If the controller supports enhanced flush, flush the data queued at the
        * controller */
       if (controller->supports_non_flushable_pb() &&

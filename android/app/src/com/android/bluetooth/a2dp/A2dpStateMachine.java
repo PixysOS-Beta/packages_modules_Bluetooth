@@ -52,12 +52,14 @@ import android.bluetooth.BluetoothCodecConfig;
 import android.bluetooth.BluetoothCodecStatus;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothProfile;
+import android.bluetooth.BluetoothProtoEnums;
 import android.content.Intent;
 import android.os.Looper;
 import android.os.Message;
 import android.util.Log;
 
 import com.android.bluetooth.Utils;
+import com.android.bluetooth.btservice.MetricsLogger;
 import com.android.bluetooth.btservice.ProfileService;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.State;
@@ -73,6 +75,9 @@ import java.util.Scanner;
 final class A2dpStateMachine extends StateMachine {
     private static final boolean DBG = true;
     private static final String TAG = "A2dpStateMachine";
+
+    // TODO(b/240635097): remove in U
+    private static final int SOURCE_CODEC_TYPE_OPUS = 6;
 
     static final int CONNECT = 1;
     static final int DISCONNECT = 2;
@@ -298,6 +303,8 @@ final class A2dpStateMachine extends StateMachine {
                     event.device = mDevice;
                     event.valueInt = A2dpStackEvent.CONNECTION_STATE_DISCONNECTED;
                     sendMessage(STACK_EVENT, event);
+                    MetricsLogger.getInstance().count(
+                            BluetoothProtoEnums.A2DP_CONNECTION_TIMEOUT, 1);
                     break;
                 }
                 case DISCONNECT:
@@ -476,6 +483,7 @@ final class A2dpStateMachine extends StateMachine {
             // codecs (perhaps it's had a firmware update, etc.) and save that state if
             // it differs from what we had saved before.
             mA2dpService.updateOptionalCodecsSupport(mDevice);
+            mA2dpService.updateLowLatencyAudioSupport(mDevice);
             broadcastConnectionState(mConnectionState, mLastConnectionState);
             // Upon connected, the audio starts out as stopped
             broadcastAudioState(BluetoothA2dp.STATE_NOT_PLAYING,
@@ -648,6 +656,7 @@ final class A2dpStateMachine extends StateMachine {
             // for this codec change event.
             mA2dpService.updateOptionalCodecsSupport(mDevice);
         }
+        mA2dpService.updateLowLatencyAudioSupport(mDevice);
         if (mA2dpOffloadEnabled) {
             boolean update = false;
             BluetoothCodecConfig newCodecConfig = mCodecStatus.getCodecConfig();
@@ -659,6 +668,13 @@ final class A2dpStateMachine extends StateMachine {
             } else if ((newCodecConfig.getCodecType()
                         == BluetoothCodecConfig.SOURCE_CODEC_TYPE_LDAC)
                     && (prevCodecConfig != null)
+                    && (prevCodecConfig.getCodecSpecific1()
+                        != newCodecConfig.getCodecSpecific1())) {
+                update = true;
+            } else if ((newCodecConfig.getCodecType()
+                        == SOURCE_CODEC_TYPE_OPUS) // TODO(b/240635097): update in U
+                    && (prevCodecConfig != null)
+                    // check framesize field
                     && (prevCodecConfig.getCodecSpecific1()
                         != newCodecConfig.getCodecSpecific1())) {
                 update = true;

@@ -44,6 +44,9 @@ class CustomizedMetadataEntity {
     public byte[] untethered_left_low_battery_threshold;
     public byte[] untethered_right_low_battery_threshold;
     public byte[] untethered_case_low_battery_threshold;
+    public byte[] spatial_audio;
+    public byte[] fastpair_customized;
+    public byte[] le_audio;
 
     public String toString() {
         StringBuilder builder = new StringBuilder();
@@ -94,7 +97,14 @@ class CustomizedMetadataEntity {
                 .append("|untethered_right_low_battery_threshold=")
                 .append(metadataToString(untethered_right_low_battery_threshold))
                 .append("|untethered_case_low_battery_threshold=")
-                .append(metadataToString(untethered_case_low_battery_threshold));
+                .append(metadataToString(untethered_case_low_battery_threshold))
+                .append("|spatial_audio=")
+                .append(metadataToString(spatial_audio))
+                .append("|fastpair_customized=")
+                .append(metadataToString(fastpair_customized))
+                .append("|le_audio=")
+                .append(metadataToString(le_audio));
+
 
         return builder.toString();
     }

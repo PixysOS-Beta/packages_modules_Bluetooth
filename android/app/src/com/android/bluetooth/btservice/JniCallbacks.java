@@ -71,6 +71,10 @@ final class JniCallbacks {
         mRemoteDevices.addressConsolidateCallback(mainAddress, secondaryAddress);
     }
 
+    void leAddressAssociateCallback(byte[] mainAddress, byte[] secondaryAddress) {
+        mRemoteDevices.leAddressAssociateCallback(mainAddress, secondaryAddress);
+    }
+
     void aclStateChangeCallback(int status, byte[] address, int newState,
             int transportLinkType, int hciReason) {
         mRemoteDevices.aclStateChangeCallback(status, address, newState,
@@ -108,6 +112,10 @@ final class JniCallbacks {
 
     void switchBufferSizeCallback(boolean is_low_latency_buffer_size) {
         mAdapterService.switchBufferSizeCallback(is_low_latency_buffer_size);
+    }
+
+    void switchCodecCallback(boolean is_low_latency_buffer_size) {
+        mAdapterService.switchCodecCallback(is_low_latency_buffer_size);
     }
 
 }

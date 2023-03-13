@@ -80,16 +80,11 @@ void BTA_DmSetDeviceName(const char* p_name) {
  * Returns          void
  *
  ******************************************************************************/
-void BTA_DmSearch(tBTA_DM_SEARCH_CBACK* p_cback, bool is_bonding_or_sdp) {
+void BTA_DmSearch(tBTA_DM_SEARCH_CBACK* p_cback) {
   tBTA_DM_API_SEARCH* p_msg =
       (tBTA_DM_API_SEARCH*)osi_calloc(sizeof(tBTA_DM_API_SEARCH));
 
-  /* Queue request if a device is bonding or performing service discovery */
-  if (is_bonding_or_sdp) {
-    p_msg->hdr.event = BTA_DM_API_QUEUE_SEARCH_EVT;
-  } else {
-    p_msg->hdr.event = BTA_DM_API_SEARCH_EVT;
-  }
+  p_msg->hdr.event = BTA_DM_API_SEARCH_EVT;
   p_msg->p_cback = p_cback;
 
   bta_sys_sendmsg(p_msg);
@@ -138,15 +133,11 @@ void BTA_DmSearchCancel(void) {
  *
  ******************************************************************************/
 void BTA_DmDiscover(const RawAddress& bd_addr, tBTA_DM_SEARCH_CBACK* p_cback,
-                    tBT_TRANSPORT transport, bool is_bonding_or_sdp) {
+                    tBT_TRANSPORT transport) {
   tBTA_DM_API_DISCOVER* p_msg =
       (tBTA_DM_API_DISCOVER*)osi_calloc(sizeof(tBTA_DM_API_DISCOVER));
 
-  if (is_bonding_or_sdp) {
-    p_msg->hdr.event = BTA_DM_API_QUEUE_DISCOVER_EVT;
-  } else {
-    p_msg->hdr.event = BTA_DM_API_DISCOVER_EVT;
-  }
+  p_msg->hdr.event = BTA_DM_API_DISCOVER_EVT;
   p_msg->bd_addr = bd_addr;
   p_msg->transport = transport;
   p_msg->p_cback = p_cback;
@@ -670,3 +661,42 @@ void BTA_DmBleCsisObserve(bool observe, tBTA_DM_SEARCH_CBACK* p_results_cb) {
  *
  ******************************************************************************/
 void BTA_VendorInit(void) { APPL_TRACE_API("BTA_VendorInit"); }
+
+/*******************************************************************************
+ *
+ * Function         BTA_DmClearEventFilter
+ *
+ * Description      This function clears the event filter
+ *
+ * Returns          void
+ *
+ ******************************************************************************/
+void BTA_DmClearEventFilter(void) {
+  APPL_TRACE_API("BTA_DmClearEventFilter");
+  do_in_main_thread(FROM_HERE, base::Bind(bta_dm_clear_event_filter));
+}
+
+/*******************************************************************************
+ *
+ * Function         BTA_DmBleResetId
+ *
+ * Description      This function resets the ble keys such as IRK
+ *
+ * Returns          void
+ *
+ ******************************************************************************/
+void BTA_DmBleResetId(void) {
+  APPL_TRACE_API("BTA_DmBleResetId");
+  do_in_main_thread(FROM_HERE, base::Bind(bta_dm_ble_reset_id));
+}
+
+bool BTA_DmCheckLeAudioCapable(const RawAddress& address) {
+  for (tBTM_INQ_INFO* inq_ent = BTM_InqDbFirst(); inq_ent != nullptr;
+       inq_ent = BTM_InqDbNext(inq_ent)) {
+    if (inq_ent->results.remote_bd_addr != address) continue;
+
+    LOG_INFO("Device is LE Audio capable based on AD content");
+    return inq_ent->results.ble_ad_is_le_audio_capable;
+  }
+  return false;
+}

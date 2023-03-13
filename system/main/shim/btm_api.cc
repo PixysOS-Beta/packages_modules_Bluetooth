@@ -37,9 +37,11 @@
 #include "main/shim/shim.h"
 #include "main/shim/stack.h"
 #include "osi/include/allocator.h"
+#include "stack/btm/btm_ble_int.h"
 #include "stack/btm/btm_int_types.h"
 #include "stack/include/bt_hdr.h"
 #include "stack/include/bt_octets.h"
+#include "types/ble_address_with_type.h"
 #include "types/bluetooth/uuid.h"
 #include "types/raw_address.h"
 
@@ -458,7 +460,7 @@ class ShimBondListener : public bluetooth::security::ISecurityManagerListener {
         LinkKey key;  // Never want to send the key to the stack
         (*bta_callbacks_->p_link_key_callback)(
             bluetooth::ToRawAddress(device.GetAddress()), 0, name, key,
-            BTM_LKEY_TYPE_COMBINATION);
+            BTM_LKEY_TYPE_COMBINATION, false /* is_ctkd */);
       }
       if (*bta_callbacks_->p_auth_complete_callback) {
         (*bta_callbacks_->p_auth_complete_callback)(
@@ -724,6 +726,15 @@ void bluetooth::shim::BTM_BleOpportunisticObserve(
   }
 }
 
+void bluetooth::shim::BTM_BleTargetAnnouncementObserve(
+    bool enable, tBTM_INQ_RESULTS_CB* p_results_cb) {
+  if (enable) {
+    btm_cb.ble_ctr_cb.p_target_announcement_obs_results_cb = p_results_cb;
+  } else {
+    btm_cb.ble_ctr_cb.p_target_announcement_obs_results_cb = nullptr;
+  }
+}
+
 void bluetooth::shim::BTM_EnableInterlacedPageScan() {
   Stack::GetInstance()->GetBtm()->SetInterlacedPageScan();
 }
@@ -878,13 +889,6 @@ tBTM_STATUS bluetooth::shim::BTM_ClearInqDb(const RawAddress* p_bda) {
   return BTM_NO_RESOURCES;
 }
 
-tBTM_STATUS bluetooth::shim::BTM_WriteEIR(BT_HDR* p_buff) {
-  LOG_INFO("UNIMPLEMENTED %s", __func__);
-  CHECK(p_buff != nullptr);
-  osi_free(p_buff);
-  return BTM_NO_RESOURCES;
-}
-
 bool bluetooth::shim::BTM_HasEirService(const uint32_t* p_eir_uuid,
                                         uint16_t uuid16) {
   LOG_INFO("UNIMPLEMENTED %s", __func__);
@@ -900,12 +904,6 @@ tBTM_EIR_SEARCH_RESULT bluetooth::shim::BTM_HasInquiryEirService(
 }
 
 void bluetooth::shim::BTM_AddEirService(uint32_t* p_eir_uuid, uint16_t uuid16) {
-  LOG_INFO("UNIMPLEMENTED %s", __func__);
-  CHECK(p_eir_uuid != nullptr);
-}
-
-void bluetooth::shim::BTM_RemoveEirService(uint32_t* p_eir_uuid,
-                                           uint16_t uuid16) {
   LOG_INFO("UNIMPLEMENTED %s", __func__);
   CHECK(p_eir_uuid != nullptr);
 }
@@ -1243,8 +1241,8 @@ void bluetooth::shim::BTM_ConfirmReqReply(tBTM_STATUS res,
                                           const RawAddress& bd_addr) {
   // Send for both Classic and LE until we can determine the type
   bool accept = res == BTM_SUCCESS;
-  hci::AddressWithType address = ToAddressWithType(bd_addr, 0);
-  hci::AddressWithType address2 = ToAddressWithType(bd_addr, 1);
+  hci::AddressWithType address = ToAddressWithType(bd_addr, BLE_ADDR_PUBLIC);
+  hci::AddressWithType address2 = ToAddressWithType(bd_addr, BLE_ADDR_RANDOM);
   auto security_manager =
       bluetooth::shim::GetSecurityModule()->GetSecurityManager();
   if (ShimUi::GetInstance()->waiting_for_pairing_prompt_) {
@@ -1339,5 +1337,15 @@ void bluetooth::shim::BTM_RemoteOobDataReply(tBTM_STATUS res,
 tBTM_STATUS bluetooth::shim::BTM_SetDeviceClass(DEV_CLASS dev_class) {
   // TODO(optedoblivion): see if we need this, I don't think we do
   LOG_WARN("Unimplemented");
+  return BTM_SUCCESS;
+}
+
+tBTM_STATUS bluetooth::shim::BTM_ClearEventFilter() {
+  controller_get_interface()->clear_event_filter();
+  return BTM_SUCCESS;
+}
+
+tBTM_STATUS bluetooth::shim::BTM_BleResetId() {
+  btm_ble_reset_id();
   return BTM_SUCCESS;
 }

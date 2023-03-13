@@ -19,6 +19,7 @@ package com.android.bluetooth.btservice;
 import static android.Manifest.permission.BLUETOOTH_CONNECT;
 import static android.Manifest.permission.BLUETOOTH_SCAN;
 
+import android.app.admin.SecurityLog;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothAssignedNumbers;
 import android.bluetooth.BluetoothClass;
@@ -42,6 +43,7 @@ import android.util.Log;
 import com.android.bluetooth.BluetoothStatsLog;
 import com.android.bluetooth.R;
 import com.android.bluetooth.Utils;
+import com.android.bluetooth.bas.BatteryService;
 import com.android.bluetooth.hfp.HeadsetHalConstants;
 import com.android.internal.annotations.VisibleForTesting;
 
@@ -71,6 +73,24 @@ final class RemoteDevices {
     private final HashMap<String, DeviceProperties> mDevices;
     private final HashMap<String, String> mDualDevicesMap;
     private Queue<String> mDeviceQueue;
+
+    /**
+     * Bluetooth HFP v1.8 specifies the Battery Charge indicator of AG can take values from
+     * {@code 0} to {@code 5}, but it does not specify how to map the values back to percentages.
+     * The following mapping is used:
+     *   - Level 0:                 0%
+     *   - Level 1: midpoint of  1-25%
+     *   - Level 2: midpoint of 26-50%
+     *   - Level 3: midpoint of 51-75%
+     *   - Level 4: midpoint of 76-99%
+     *   - Level 5:               100%
+     */
+    private static final int HFP_BATTERY_CHARGE_INDICATOR_0 = 0;
+    private static final int HFP_BATTERY_CHARGE_INDICATOR_1 = 13;
+    private static final int HFP_BATTERY_CHARGE_INDICATOR_2 = 38;
+    private static final int HFP_BATTERY_CHARGE_INDICATOR_3 = 63;
+    private static final int HFP_BATTERY_CHARGE_INDICATOR_4 = 88;
+    private static final int HFP_BATTERY_CHARGE_INDICATOR_5 = 100;
 
     private final Handler mHandler;
     private class RemoteDevicesHandler extends Handler {
@@ -574,6 +594,38 @@ final class RemoteDevices {
                 Utils.getTempAllowlistBroadcastOptions());
     }
 
+    /**
+     * Converts HFP's Battery Charge indicator values of {@code 0 -- 5} to an integer percentage.
+     */
+    @VisibleForTesting
+    static int batteryChargeIndicatorToPercentge(int indicator) {
+        int percent;
+        switch (indicator) {
+            case 5:
+                percent = HFP_BATTERY_CHARGE_INDICATOR_5;
+                break;
+            case 4:
+                percent = HFP_BATTERY_CHARGE_INDICATOR_4;
+                break;
+            case 3:
+                percent = HFP_BATTERY_CHARGE_INDICATOR_3;
+                break;
+            case 2:
+                percent = HFP_BATTERY_CHARGE_INDICATOR_2;
+                break;
+            case 1:
+                percent = HFP_BATTERY_CHARGE_INDICATOR_1;
+                break;
+            case 0:
+                percent = HFP_BATTERY_CHARGE_INDICATOR_0;
+                break;
+            default:
+                percent = BluetoothDevice.BATTERY_LEVEL_UNKNOWN;
+        }
+        Log.d(TAG, "Battery charge indicator: " + indicator + "; converted to: " + percent + "%");
+        return percent;
+    }
+
     private static boolean areUuidsEqual(ParcelUuid[] uuids1, ParcelUuid[] uuids2) {
         final int length1 = uuids1 == null ? 0 : uuids1.length;
         final int length2 = uuids2 == null ? 0 : uuids2.length;
@@ -673,7 +725,7 @@ final class RemoteDevices {
                             break;
                         case AbstractionLayer.BT_PROPERTY_TYPE_OF_DEVICE:
                             if (device.isConsolidated()) {
-                                return;
+                                break;
                             }
                             // The device type from hal layer, defined in bluetooth.h,
                             // matches the type defined in BluetoothDevice.java
@@ -754,6 +806,27 @@ final class RemoteDevices {
         mDualDevicesMap.put(deviceProperties.getIdentityAddress(), Utils.getAddressStringFromByte(mainAddress));
     }
 
+    /**
+     * Callback to associate an LE-only device's RPA with its identity address
+     *
+     * @param mainAddress the device's RPA
+     * @param secondaryAddress the device's identity address
+     */
+    void leAddressAssociateCallback(byte[] mainAddress, byte[] secondaryAddress) {
+        BluetoothDevice device = getDevice(mainAddress);
+        if (device == null) {
+            errorLog("leAddressAssociateCallback: device is NULL, address="
+                    + Utils.getAddressStringFromByte(mainAddress) + ", secondaryAddress="
+                    + Utils.getAddressStringFromByte(secondaryAddress));
+            return;
+        }
+        Log.d(TAG, "leAddressAssociateCallback device: " + device + ", secondaryAddress:"
+                + Utils.getAddressStringFromByte(secondaryAddress));
+
+        DeviceProperties deviceProperties = getDeviceProperties(device);
+        deviceProperties.mIdentityAddress = Utils.getAddressStringFromByte(secondaryAddress);
+    }
+
     void aclStateChangeCallback(int status, byte[] address, int newState,
                                 int transportLinkType, int hciReason) {
         BluetoothDevice device = getDevice(address);
@@ -774,6 +847,12 @@ final class RemoteDevices {
                     || state == BluetoothAdapter.STATE_BLE_TURNING_ON) {
                 intent = new Intent(BluetoothAdapter.ACTION_BLE_ACL_CONNECTED);
             }
+            BatteryService batteryService = BatteryService.getBatteryService();
+            if (batteryService != null) {
+                batteryService.connect(device);
+            }
+            SecurityLog.writeEvent(SecurityLog.TAG_BLUETOOTH_CONNECTION,
+                    Utils.getLoggableAddress(device), /* success */ 1, /* reason */ "");
             debugLog(
                     "aclStateChangeCallback: Adapter State: " + BluetoothAdapter.nameForState(state)
                             + " Connected: " + device);
@@ -795,8 +874,22 @@ final class RemoteDevices {
             }
             // Reset battery level on complete disconnection
             if (sAdapterService.getConnectionState(device) == 0) {
+                BatteryService batteryService = BatteryService.getBatteryService();
+                if (batteryService != null) {
+                    batteryService.disconnect(device);
+                }
                 resetBatteryLevel(device);
             }
+            if (!sAdapterService.isAnyProfileEnabled(device)) {
+                DeviceProperties deviceProp = getDeviceProperties(device);
+                if (deviceProp != null) {
+                    deviceProp.setBondingInitiatedLocally(false);
+                }
+            }
+            SecurityLog.writeEvent(SecurityLog.TAG_BLUETOOTH_DISCONNECTION,
+                    Utils.getLoggableAddress(device),
+                    BluetoothAdapter.BluetoothConnectionCallback.disconnectReasonToString(
+                            AdapterService.hciToAndroidDisconnectReason(hciReason)));
             debugLog(
                     "aclStateChangeCallback: Adapter State: " + BluetoothAdapter.nameForState(state)
                             + " Disconnected: " + device
@@ -807,8 +900,13 @@ final class RemoteDevices {
         int connectionState = newState == AbstractionLayer.BT_ACL_STATE_CONNECTED
                 ? BluetoothAdapter.STATE_CONNECTED : BluetoothAdapter.STATE_DISCONNECTED;
         int metricId = sAdapterService.getMetricId(device);
-        BluetoothStatsLog.write(BluetoothStatsLog.BLUETOOTH_ACL_CONNECTION_STATE_CHANGED,
-                sAdapterService.obfuscateAddress(device), connectionState, metricId);
+        BluetoothStatsLog.write(
+                BluetoothStatsLog.BLUETOOTH_ACL_CONNECTION_STATE_CHANGED,
+                sAdapterService.obfuscateAddress(device),
+                connectionState,
+                metricId,
+                transportLinkType);
+
         BluetoothClass deviceClass = device.getBluetoothClass();
         int classOfDevice = deviceClass == null ? 0 : deviceClass.getClassOfDevice();
         BluetoothStatsLog.write(BluetoothStatsLog.BLUETOOTH_CLASS_OF_DEVICE_REPORTED,
@@ -1079,7 +1177,7 @@ final class RemoteDevices {
 
         if (intent.hasExtra(BluetoothHeadsetClient.EXTRA_BATTERY_LEVEL)) {
             int batteryLevel = intent.getIntExtra(BluetoothHeadsetClient.EXTRA_BATTERY_LEVEL, -1);
-            updateBatteryLevel(device, batteryLevel);
+            updateBatteryLevel(device, batteryChargeIndicatorToPercentge(batteryLevel));
         }
     }
 

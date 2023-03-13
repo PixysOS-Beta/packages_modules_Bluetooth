@@ -70,7 +70,7 @@ static bool pts_test_send_authentication_complete_failure(tSMP_CB* p_cb) {
  * Function         smp_update_key_mask
  * Description      This function updates the key mask for sending or receiving.
  ******************************************************************************/
-void smp_update_key_mask(tSMP_CB* p_cb, uint8_t key_type, bool recv) {
+static void smp_update_key_mask(tSMP_CB* p_cb, uint8_t key_type, bool recv) {
   SMP_TRACE_DEBUG(
       "%s before update role=%d recv=%d local_i_key = %02x, local_r_key = %02x",
       __func__, p_cb->role, recv, p_cb->local_i_key, p_cb->local_r_key);
@@ -136,6 +136,10 @@ void smp_send_app_cback(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
         cb_data.io_req.max_key_size = SMP_MAX_ENC_KEY_SIZE;
         cb_data.io_req.init_keys = SMP_BR_SEC_DEFAULT_KEY;
         cb_data.io_req.resp_keys = SMP_BR_SEC_DEFAULT_KEY;
+        break;
+
+      case SMP_LE_ADDR_ASSOC_EVT:
+        cb_data.id_addr = p_cb->id_addr;
         break;
 
       default:
@@ -212,6 +216,7 @@ void smp_send_app_cback(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
 
         // Expected, but nothing to do
         case SMP_SC_LOC_OOB_DATA_UP_EVT:
+        case SMP_LE_ADDR_ASSOC_EVT:
           break;
 
         default:
@@ -396,8 +401,6 @@ void smp_send_id_info(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
 void smp_send_csrk_info(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   SMP_TRACE_DEBUG("%s", __func__);
   smp_update_key_mask(p_cb, SMP_SEC_KEY_TYPE_CSRK, false);
-  p_cb->total_tx_unacked =
-      p_cb->total_tx_unacked > 0 ? p_cb->total_tx_unacked - 1 : 0;
 
   if (smp_send_cmd(SMP_OPCODE_SIGN_INFO, p_cb)) {
     tBTM_LE_KEY_VALUE key = {
@@ -502,7 +505,6 @@ void smp_proc_pair_fail(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   SMP_TRACE_DEBUG("%s", __func__);
 
   if (p_cb->rcvd_cmd_len < 2) {
-    android_errorWriteLog(0x534e4554, "111214739");
     SMP_TRACE_WARNING("%s: rcvd_cmd_len %d too short: must be at least 2",
                       __func__, p_cb->rcvd_cmd_len);
     p_cb->status = SMP_INVALID_PARAMETERS;
@@ -534,7 +536,6 @@ void smp_proc_pair_cmd(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   if (smp_command_has_invalid_length(p_cb)) {
     tSMP_INT_DATA smp_int_data;
     smp_int_data.status = SMP_INVALID_PARAMETERS;
-    android_errorWriteLog(0x534e4554, "111850706");
     smp_sm_event(p_cb, SMP_AUTH_CMPL_EVT, &smp_int_data);
     return;
   }
@@ -545,6 +546,14 @@ void smp_proc_pair_cmd(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   STREAM_TO_UINT8(p_cb->peer_enc_size, p);
   STREAM_TO_UINT8(p_cb->peer_i_key, p);
   STREAM_TO_UINT8(p_cb->peer_r_key, p);
+
+  tSMP_STATUS reason = p_cb->cert_failure;
+  if (reason == SMP_ENC_KEY_SIZE) {
+    tSMP_INT_DATA smp_int_data;
+    smp_int_data.status = reason;
+    smp_sm_event(p_cb, SMP_AUTH_CMPL_EVT, &smp_int_data);
+    return;
+  }
 
   if (smp_command_has_invalid_parameters(p_cb)) {
     tSMP_INT_DATA smp_int_data;
@@ -701,7 +710,6 @@ void smp_process_pairing_public_key(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   memcpy(pt.y, p_cb->peer_publ_key.y, BT_OCTET32_LEN);
 
   if (!memcmp(p_cb->peer_publ_key.x, p_cb->loc_publ_key.x, BT_OCTET32_LEN)) {
-    android_errorWriteLog(0x534e4554, "174886838");
     SMP_TRACE_WARNING("Remote and local public keys can't match");
     tSMP_INT_DATA smp;
     smp.status = SMP_PAIR_AUTH_FAIL;
@@ -710,7 +718,6 @@ void smp_process_pairing_public_key(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   }
 
   if (!ECC_ValidatePoint(pt)) {
-    android_errorWriteLog(0x534e4554, "72377774");
     tSMP_INT_DATA smp;
     smp.status = SMP_PAIR_AUTH_FAIL;
     smp_sm_event(p_cb, SMP_AUTH_CMPL_EVT, &smp);
@@ -821,7 +828,6 @@ void smp_br_process_pairing_command(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   if (smp_command_has_invalid_length(p_cb)) {
     tSMP_INT_DATA smp_int_data;
     smp_int_data.status = SMP_INVALID_PARAMETERS;
-    android_errorWriteLog(0x534e4554, "111213909");
     smp_br_state_machine_event(p_cb, SMP_BR_AUTH_CMPL_EVT, &smp_int_data);
     return;
   }
@@ -904,15 +910,6 @@ void smp_br_check_authorization_request(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   }
   SMP_TRACE_DEBUG("%s: use h7 = %d", __func__, p_cb->key_derivation_h7_used);
 
-  /* SMP over BR/EDR should always be used with CTKD, so derive LTK from
-   * LK before receiving keys */
-  if ((p_cb->role == HCI_ROLE_CENTRAL &&
-       (p_cb->local_i_key & SMP_SEC_KEY_TYPE_ENC)) ||
-      (p_cb->role == HCI_ROLE_PERIPHERAL &&
-       (p_cb->local_r_key & SMP_SEC_KEY_TYPE_ENC))) {
-    smp_generate_ltk(p_cb, p_data);
-  }
-
   SMP_TRACE_DEBUG(
       "%s rcvs upgrades: i_keys=0x%x r_keys=0x%x (i-initiator r-responder)",
       __func__, p_cb->local_i_key, p_cb->local_r_key);
@@ -969,7 +966,6 @@ void smp_proc_enc_info(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   if (smp_command_has_invalid_parameters(p_cb)) {
     tSMP_INT_DATA smp_int_data;
     smp_int_data.status = SMP_INVALID_PARAMETERS;
-    android_errorWriteLog(0x534e4554, "111937065");
     smp_sm_event(p_cb, SMP_AUTH_CMPL_EVT, &smp_int_data);
     return;
   }
@@ -986,7 +982,6 @@ void smp_proc_central_id(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   SMP_TRACE_DEBUG("%s", __func__);
 
   if (p_cb->rcvd_cmd_len < 11) {  // 1(Code) + 2(EDIV) + 8(Rand)
-    android_errorWriteLog(0x534e4554, "111937027");
     SMP_TRACE_ERROR("%s: Invalid command length: %d, should be at least 11",
                     __func__, p_cb->rcvd_cmd_len);
     return;
@@ -1021,7 +1016,6 @@ void smp_proc_id_info(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   if (smp_command_has_invalid_parameters(p_cb)) {
     tSMP_INT_DATA smp_int_data;
     smp_int_data.status = SMP_INVALID_PARAMETERS;
-    android_errorWriteLog(0x534e4554, "111937065");
     smp_sm_event(p_cb, SMP_AUTH_CMPL_EVT, &smp_int_data);
     return;
   }
@@ -1039,7 +1033,6 @@ void smp_proc_id_addr(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   if (smp_command_has_invalid_parameters(p_cb)) {
     tSMP_INT_DATA smp_int_data;
     smp_int_data.status = SMP_INVALID_PARAMETERS;
-    android_errorWriteLog(0x534e4554, "111214770");
     smp_sm_event(p_cb, SMP_AUTH_CMPL_EVT, &smp_int_data);
     return;
   }
@@ -1061,8 +1054,11 @@ void smp_proc_id_addr(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
 
   /* store the ID key from peer device */
   if ((p_cb->peer_auth_req & SMP_AUTH_BOND) &&
-      (p_cb->loc_auth_req & SMP_AUTH_BOND))
+      (p_cb->loc_auth_req & SMP_AUTH_BOND)) {
     btm_sec_save_le_key(p_cb->pairing_bda, BTM_LE_KEY_PID, &pid_key, true);
+    p_cb->cb_evt = SMP_LE_ADDR_ASSOC_EVT;
+    smp_send_app_cback(p_cb, NULL);
+  }
   smp_key_distribution_by_transport(p_cb, NULL);
 }
 
@@ -1074,7 +1070,6 @@ void smp_proc_srk_info(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   if (smp_command_has_invalid_parameters(p_cb)) {
     tSMP_INT_DATA smp_int_data;
     smp_int_data.status = SMP_INVALID_PARAMETERS;
-    android_errorWriteLog(0x534e4554, "111214470");
     smp_sm_event(p_cb, SMP_AUTH_CMPL_EVT, &smp_int_data);
     return;
   }
@@ -1302,7 +1297,6 @@ void smp_key_distribution(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
               "%s BR key is higher security than existing LE keys, don't "
               "derive LK from LTK",
               __func__);
-          android_errorWriteLog(0x534e4554, "158854097");
         } else {
           smp_derive_link_key_from_long_term_key(p_cb, NULL);
         }

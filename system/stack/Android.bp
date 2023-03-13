@@ -27,7 +27,7 @@ cc_test_library {
 // Bluetooth stack static library for target
 cc_library_static {
     name: "libbt-stack",
-    defaults: ["fluoride_defaults"],
+    defaults: ["fluoride_basic_defaults"],
     local_include_dirs: [
         "include",
         "avct",
@@ -55,6 +55,7 @@ cc_library_static {
         "external/aac/libSYS/include",
         "external/libldac/inc",
         "external/libldac/abr/inc",
+        "external/libopus/include",
         "packages/modules/Bluetooth/system",
         "packages/modules/Bluetooth/system/gd",
         "packages/modules/Bluetooth/system/vnd/include",
@@ -83,9 +84,11 @@ cc_library_static {
         "a2dp/a2dp_vendor_aptx_encoder.cc",
         "a2dp/a2dp_vendor_aptx_hd_encoder.cc",
         "a2dp/a2dp_vendor_ldac.cc",
-        "a2dp/a2dp_vendor_ldac_abr.cc",
         "a2dp/a2dp_vendor_ldac_decoder.cc",
         "a2dp/a2dp_vendor_ldac_encoder.cc",
+        "a2dp/a2dp_vendor_opus.cc",
+        "a2dp/a2dp_vendor_opus_encoder.cc",
+        "a2dp/a2dp_vendor_opus_decoder.cc",
         "avct/avct_api.cc",
         "avct/avct_bcb_act.cc",
         "avct/avct_ccb.cc",
@@ -202,25 +205,24 @@ cc_library_static {
     ],
     static_libs: [
         "libbt-hci",
-        "libFraunhoferAAC",
-        "libbt-platform-protos-lite",
     ],
-    shared_libs: [
-        "libcutils",
-        "liblog",
-        "libcrypto",
-    ],
-    required: [
-        "libldacBT_enc",
+    whole_static_libs: [
         "libldacBT_abr",
+        "libldacBT_enc",
+        "libaptx_enc",
+        "libaptxhd_enc",
     ],
     host_supported: true,
+    min_sdk_version: "Tiramisu"
 }
 
 // Bluetooth stack unit tests for target
 cc_test {
     name: "net_test_stack",
-    defaults: ["fluoride_defaults"],
+    defaults: [
+        "fluoride_defaults",
+        "mts_defaults",
+    ],
     test_suites: ["device-tests"],
     local_include_dirs: [
         "include",
@@ -237,12 +239,9 @@ cc_test {
     shared_libs: [
         "android.hardware.bluetooth@1.0",
         "android.hardware.bluetooth@1.1",
-        "android.hardware.bluetooth.a2dp@1.0",
         "android.hardware.bluetooth.audio@2.0",
         "android.hardware.bluetooth.audio@2.1",
-        "android.hardware.bluetooth.audio@2.2",
-        "android.hardware.bluetooth.audio-V1-ndk",
-        "android.system.suspend.control-V1-ndk",
+        "android.hardware.bluetooth.audio-V2-ndk",
         "libaaudio",
         "libbinder_ndk",
         "libcutils",
@@ -258,6 +257,8 @@ cc_test {
         "libcrypto",
     ],
     static_libs: [
+        "android.hardware.bluetooth.a2dp@1.0",
+        "android.system.suspend.control-V1-ndk",
         "libbt-audio-hal-interface",
         "libbluetooth-dumpsys",
         "libbtcore",
@@ -272,8 +273,8 @@ cc_test {
         "libbt-hci",
         "libbtdevice",
         "libg722codec",
-        "liblc3codec",
         "liblc3",
+        "libopus",
         "libosi",
         "libudrv-uipc",
         "libbt-protos-lite",
@@ -285,7 +286,10 @@ cc_test {
 
 cc_test {
     name: "net_test_stack_rfcomm",
-    defaults: ["fluoride_defaults"],
+    defaults: [
+        "fluoride_defaults",
+        "mts_defaults",
+    ],
     test_suites: ["device-tests"],
     host_supported: true,
     local_include_dirs: [
@@ -305,6 +309,7 @@ cc_test {
     srcs: [
         ":TestCommonMockFunctions",
         ":TestMockHci",
+        ":TestMockStackMetrics",
         "rfcomm/port_api.cc",
         "rfcomm/port_rfc.cc",
         "rfcomm/port_utils.cc",
@@ -343,7 +348,10 @@ cc_test {
 // Bluetooth stack smp unit tests for target
 cc_test {
     name: "net_test_stack_smp",
-    defaults: ["fluoride_defaults"],
+    defaults: [
+        "fluoride_defaults",
+        "mts_defaults",
+    ],
     host_supported: true,
     test_suites: ["device-tests"],
     local_include_dirs: [
@@ -387,12 +395,14 @@ cc_test {
         "BluetoothGeneratedPackets_h",
     ],
     shared_libs: [
+        "android.hardware.bluetooth@1.0",
+        "android.hardware.bluetooth@1.1",
         "libcrypto",
         "libcutils",
-        "libflatbuffers-cpp",
     ],
     static_libs: [
         "liblog",
+        "libflatbuffers-cpp",
         "libgmock",
         "libosi",
     ],
@@ -401,7 +411,10 @@ cc_test {
 // Bluetooth stack multi-advertising unit tests for target
 cc_test {
     name: "net_test_stack_multi_adv",
-    defaults: ["fluoride_defaults"],
+    defaults: [
+        "fluoride_defaults",
+        "mts_defaults",
+    ],
     test_suites: ["device-tests"],
     local_include_dirs: [
         "include",
@@ -420,12 +433,14 @@ cc_test {
         "test/ble_advertiser_test.cc",
     ],
     shared_libs: [
-        "android.system.suspend.control-V1-ndk",
+        "android.hardware.bluetooth@1.0",
+        "android.hardware.bluetooth@1.1",
         "libbinder_ndk",
         "libcrypto",
         "libcutils",
     ],
     static_libs: [
+        "android.system.suspend.control-V1-ndk",
         "libbluetooth-types",
         "liblog",
         "libgmock",
@@ -438,7 +453,10 @@ cc_test {
 // Bluetooth stack advertise data parsing unit tests for target
 cc_test {
     name: "net_test_stack_ad_parser",
-    defaults: ["fluoride_defaults"],
+    defaults: [
+        "fluoride_defaults",
+        "mts_defaults",
+    ],
     test_suites: ["device-tests"],
     local_include_dirs: [
         "include",
@@ -447,11 +465,13 @@ cc_test {
         "test/ad_parser_unittest.cc",
     ],
     shared_libs: [
-        "android.system.suspend.control-V1-ndk",
+        "android.hardware.bluetooth@1.0",
+        "android.hardware.bluetooth@1.1",
         "libbinder_ndk",
         "libcrypto",
     ],
     static_libs: [
+        "android.system.suspend.control-V1-ndk",
         "libbluetooth-types",
         "liblog",
         "libgmock",
@@ -462,26 +482,30 @@ cc_test {
 cc_test {
     name: "net_test_gatt_conn_multiplexing",
     defaults: ["fluoride_defaults"],
+    host_supported: true,
     local_include_dirs: [
         "include",
         "btm",
+        "test/common",
     ],
     include_dirs: [
         "packages/modules/Bluetooth/system",
         "packages/modules/Bluetooth/system/gd",
         "packages/modules/Bluetooth/system/internal_include",
-        "packages/modules/Bluetooth/system/internal_include",
         "packages/modules/Bluetooth/system/utils/include",
     ],
     srcs: [
         "gatt/connection_manager.cc",
+        "test/common/mock_btm_api_layer.cc",
         "test/gatt_connection_manager_test.cc",
+        ":TestCommonMainHandler",
     ],
     shared_libs: [
         "libcutils",
     ],
     static_libs: [
         "libbluetooth-types",
+        "libbt-common",
         "liblog",
         "libgmock",
     ],
@@ -492,7 +516,10 @@ cc_test {
 
 cc_test {
     name: "net_test_stack_gatt_native",
-    defaults: ["fluoride_defaults"],
+    defaults: [
+        "fluoride_defaults",
+        "mts_defaults",
+    ],
     test_suites: ["device-tests"],
     host_supported: true,
     test_options: {
@@ -537,7 +564,10 @@ cc_test {
 
 cc_test {
     name: "net_test_stack_avdtp",
-    defaults: ["fluoride_defaults"],
+    defaults: [
+        "fluoride_defaults",
+        "mts_defaults",
+    ],
     test_suites: ["device-tests"],
     host_supported: true,
     test_options: {
@@ -587,8 +617,116 @@ cc_test {
 }
 
 cc_test {
+    name: "net_test_stack_a2dp_codecs_native",
+    defaults: [
+        "fluoride_defaults",
+        "mts_defaults",
+    ],
+    cflags: [
+        "-DUNIT_TESTS",
+    ],
+    test_suites: ["device-tests"],
+    host_supported: true,
+    test_options: {
+        unit_test: true,
+    },
+    include_dirs: [
+        "external/aac/libAACenc/include",
+        "external/aac/libAACdec/include",
+        "external/aac/libSYS/include",
+        "external/libldac/inc",
+        "external/libldac/abr/inc",
+        "external/libopus/include",
+        "packages/modules/Bluetooth/system",
+        "packages/modules/Bluetooth/system/btif/include",
+        "packages/modules/Bluetooth/system/embdrv/encoder_for_aptxhd/include",
+        "packages/modules/Bluetooth/system/gd",
+        "packages/modules/Bluetooth/system/stack/include",
+        "packages/modules/Bluetooth/system/utils/include",
+    ],
+    target: {
+        host: {
+            srcs: [
+                ":BluetoothHostTestingLogCapture",
+            ],
+        },
+        android: {
+            srcs: [
+                ":BluetoothAndroidTestingLogCapture",
+            ],
+            test_config: "test/a2dp/AndroidTest.xml",
+        }
+    },
+    data: [
+        "test/a2dp/raw_data/*",
+    ],
+    srcs: [
+        "a2dp/a2dp_aac.cc",
+        "a2dp/a2dp_aac_decoder.cc",
+        "a2dp/a2dp_aac_encoder.cc",
+        "a2dp/a2dp_codec_config.cc",
+        "a2dp/a2dp_sbc.cc",
+        "a2dp/a2dp_sbc_decoder.cc",
+        "a2dp/a2dp_sbc_encoder.cc",
+        "a2dp/a2dp_sbc_up_sample.cc",
+        "a2dp/a2dp_vendor.cc",
+        "a2dp/a2dp_vendor_aptx.cc",
+        "a2dp/a2dp_vendor_aptx_hd.cc",
+        "a2dp/a2dp_vendor_aptx_encoder.cc",
+        "a2dp/a2dp_vendor_aptx_hd_encoder.cc",
+        "a2dp/a2dp_vendor_ldac.cc",
+        "a2dp/a2dp_vendor_ldac_decoder.cc",
+        "a2dp/a2dp_vendor_ldac_encoder.cc",
+        "a2dp/a2dp_vendor_opus.cc",
+        "a2dp/a2dp_vendor_opus_encoder.cc",
+        "a2dp/a2dp_vendor_opus_decoder.cc",
+        "test/a2dp/a2dp_aac_unittest.cc",
+        "test/a2dp/a2dp_sbc_unittest.cc",
+        "test/a2dp/a2dp_opus_unittest.cc",
+        "test/a2dp/a2dp_vendor_ldac_unittest.cc",
+        "test/a2dp/mock_bta_av_codec.cc",
+        "test/a2dp/test_util.cc",
+        "test/a2dp/wav_reader.cc",
+        "test/a2dp/wav_reader_unittest.cc",
+        ":TestMockBta",
+        ":TestMockStackA2dpApi",
+    ],
+    shared_libs: [
+        "libcrypto",
+        "libcutils",
+        "libprotobuf-cpp-lite",
+    ],
+    static_libs: [
+        "libbt-common",
+        "libbt-protos-lite",
+        "libbt-sbc-decoder",
+        "libbt-sbc-encoder",
+        "libFraunhoferAAC",
+        "libgmock",
+        "liblog",
+        "libopus",
+        "libosi",
+        "libosi-AllocationTestHarness",
+    ],
+    whole_static_libs: [
+        "libaptx_enc",
+        "libaptxhd_enc",
+        "libldacBT_abr",
+        "libldacBT_enc",
+    ],
+    sanitize: {
+        address: true,
+        cfi: true,
+        misc_undefined: ["bounds"],
+    },
+}
+
+cc_test {
     name: "net_test_stack_a2dp_native",
-    defaults: ["fluoride_defaults"],
+    defaults: [
+        "fluoride_defaults",
+        "mts_defaults",
+    ],
     test_suites: ["device-tests"],
     host_supported: true,
     test_options: {
@@ -601,6 +739,7 @@ cc_test {
         "packages/modules/Bluetooth/system/stack/include",
     ],
     srcs: [
+        "a2dp/a2dp_vendor_ldac_decoder.cc",
         "test/a2dp/a2dp_vendor_ldac_decoder_test.cc",
         "test/a2dp/misc_fake.cc",
     ],
@@ -626,7 +765,10 @@ cc_test {
 // gatt sr hash test
 cc_test {
     name: "net_test_stack_gatt_sr_hash_native",
-    defaults: ["fluoride_defaults"],
+    defaults: [
+        "fluoride_defaults",
+        "mts_defaults",
+    ],
     test_suites: ["device-tests"],
     host_supported: true,
     include_dirs: [
@@ -638,6 +780,7 @@ cc_test {
         "packages/modules/Bluetooth/system/utils/include",
     ],
     srcs: crypto_toolbox_srcs + [
+        ":TestCommonMainHandler",
         ":TestMockStackBtm",
         "gatt/gatt_db.cc",
         "gatt/gatt_sr_hash.cc",
@@ -670,7 +813,10 @@ cc_test {
     test_options: {
         unit_test: true,
     },
-    defaults: ["fluoride_defaults"],
+    defaults: [
+        "fluoride_defaults",
+        "mts_defaults",
+    ],
     local_include_dirs: [
         "btm",
         "include",
@@ -686,6 +832,7 @@ cc_test {
         "test/common/mock_controller.cc",
         "test/common/mock_gatt_layer.cc",
         "test/common/mock_hcic_layer.cc",
+        ":TestCommonStackConfig"
     ],
     static_libs: [
         "libbt-common",
@@ -716,6 +863,7 @@ cc_test {
     defaults: [
         "fluoride_defaults",
         "clang_coverage_bin",
+        "mts_defaults",
     ],
     local_include_dirs: [
         "include",
@@ -728,6 +876,7 @@ cc_test {
     include_dirs:[
         "packages/modules/Bluetooth/system",
         "packages/modules/Bluetooth/system/gd",
+        "packages/modules/Bluetooth/system/internal_include"
     ],
     srcs: [
         "eatt/eatt.cc",
@@ -738,6 +887,8 @@ cc_test {
         "test/common/mock_l2cap_layer.cc",
         "test/gatt/mock_gatt_utils_ref.cc",
         "test/eatt/eatt_test.cc",
+        ":TestCommonMainHandler",
+        ":TestCommonStackConfig",
     ],
     shared_libs: [
         "libcutils",
@@ -763,7 +914,10 @@ cc_test {
     test_options: {
         unit_test: true,
     },
-    defaults: ["fluoride_defaults"],
+    defaults: [
+        "fluoride_defaults",
+        "mts_defaults",
+    ],
     local_include_dirs: [
         "include",
         "btm",
@@ -825,12 +979,14 @@ cc_test {
         "metrics/stack_metrics_logging.cc",
         "test/btm/stack_btm_test.cc",
         "test/btm/peer_packet_types_test.cc",
+        "test/common/mock_eatt.cc",
     ],
     static_libs: [
         "libbt-common",
         "libbt-protos-lite",
         "libbtdevice",
         "libbt-utils",
+        "libflatbuffers-cpp",
         "libgmock",
         "liblog",
         "libosi",
@@ -838,18 +994,12 @@ cc_test {
     ],
     shared_libs: [
         "libcrypto",
-        "libflatbuffers-cpp",
         "libprotobuf-cpp-lite",
     ],
     sanitize: {
-        address: true,
-        all_undefined: true,
-        cfi: true,
-        integer_overflow: true,
-        scs: true,
-        diag: {
-            undefined : true
-        },
+      hwaddress: true,
+      integer_overflow: true,
+      scs: true,
     },
 }
 
@@ -857,7 +1007,10 @@ cc_test {
     name: "net_test_stack_hci",
     test_suites: ["device-tests"],
     host_supported: true,
-    defaults: ["fluoride_defaults"],
+    defaults: [
+        "fluoride_defaults",
+        "mts_defaults",
+    ],
     local_include_dirs: [
         "include",
         "btm",
@@ -900,7 +1053,10 @@ cc_test {
     name: "net_test_stack_hid",
     test_suites: ["device-tests"],
     host_supported: true,
-    defaults: ["fluoride_defaults"],
+    defaults: [
+        "fluoride_defaults",
+        "mts_defaults",
+    ],
     local_include_dirs: [
         "include",
         "test/common",
@@ -949,7 +1105,10 @@ cc_test {
     name: "net_test_stack_btu",
     test_suites: ["device-tests"],
     host_supported: true,
-    defaults: ["fluoride_defaults"],
+    defaults: [
+        "fluoride_defaults",
+        "mts_defaults",
+    ],
     local_include_dirs: [
         "include",
         "test/common",
@@ -982,6 +1141,7 @@ cc_test {
         "libbt-common",
         "libbt-protos-lite",
         "libbtdevice",
+        "libflatbuffers-cpp",
         "libgmock",
         "liblog",
         "libosi",
@@ -989,7 +1149,6 @@ cc_test {
     shared_libs: [
         "libbinder_ndk",
         "libcrypto",
-        "libflatbuffers-cpp",
         "libprotobuf-cpp-lite",
     ],
     sanitize: {
@@ -1008,7 +1167,10 @@ cc_test {
     name: "net_test_stack_gatt",
     test_suites: ["device-tests"],
     host_supported: true,
-    defaults: ["fluoride_defaults"],
+    defaults: [
+        "fluoride_defaults",
+        "mts_defaults",
+    ],
     local_include_dirs: [
         "include",
         "test/common",
@@ -1024,6 +1186,8 @@ cc_test {
     ],
     srcs: [
         ":OsiCompatSources",
+        ":TestCommonMainHandler",
+        ":TestCommonStackConfig",
         ":TestMockBta",
         ":TestMockBtif",
         ":TestMockHci",
@@ -1053,6 +1217,78 @@ cc_test {
         "libbt-common",
         "libbt-protos-lite",
         "libbtdevice",
+        "libflatbuffers-cpp",
+        "libgmock",
+        "liblog",
+        "libosi",
+    ],
+    shared_libs: [
+        "libbinder_ndk",
+        "libcrypto",
+        "libprotobuf-cpp-lite",
+    ],
+    sanitize: {
+        address: true,
+        all_undefined: true,
+        cfi: true,
+        integer_overflow: true,
+        scs: true,
+        diag: {
+            undefined : true
+        },
+    },
+}
+
+cc_test {
+    name: "net_test_stack_l2cap",
+    test_suites: ["device-tests"],
+    host_supported: true,
+    defaults: [
+        "fluoride_defaults",
+        "mts_defaults",
+    ],
+    local_include_dirs: [
+        "include",
+        "test/common",
+    ],
+    include_dirs: [
+        "packages/modules/Bluetooth/system",
+        "packages/modules/Bluetooth/system/gd",
+        "packages/modules/Bluetooth/system/utils/include",
+    ],
+    generated_headers: [
+        "BluetoothGeneratedDumpsysDataSchema_h",
+        "BluetoothGeneratedPackets_h",
+    ],
+    srcs: [
+        ":OsiCompatSources",
+        ":TestCommonMainHandler",
+        ":TestCommonMockFunctions",
+        ":TestCommonStackConfig",
+        ":TestMockBta",
+        ":TestMockBtif",
+        ":TestMockHci",
+        ":TestMockLegacyHciCommands",
+        ":TestMockMainShim",
+        ":TestMockStackAcl",
+        ":TestMockStackBtm",
+        ":TestMockStackCryptotoolbox",
+        ":TestMockStackHcic",
+        ":TestMockStackSdp",
+        ":TestMockStackSmp",
+        "l2cap/l2c_api.cc",
+        "l2cap/l2c_ble.cc",
+        "l2cap/l2c_csm.cc",
+        "l2cap/l2c_fcr.cc",
+        "l2cap/l2c_link.cc",
+        "l2cap/l2c_main.cc",
+        "l2cap/l2c_utils.cc",
+        "test/stack_l2cap_test.cc",
+    ],
+    static_libs: [
+        "libbt-common",
+        "libbt-protos-lite",
+        "libbtdevice",
         "libgmock",
         "liblog",
         "libosi",
@@ -1073,4 +1309,120 @@ cc_test {
             undefined : true
         },
     },
+}
+
+cc_test {
+    name: "net_test_stack_acl",
+    test_suites: ["device-tests"],
+    host_supported: true,
+    defaults: [
+        "fluoride_defaults",
+        "mts_defaults",
+    ],
+    local_include_dirs: [
+        "include",
+        "test/common",
+    ],
+    include_dirs: [
+        "packages/modules/Bluetooth/system",
+        "packages/modules/Bluetooth/system/gd",
+        "packages/modules/Bluetooth/system/utils/include",
+    ],
+    generated_headers: [
+        "BluetoothGeneratedDumpsysDataSchema_h",
+        "BluetoothGeneratedPackets_h",
+    ],
+    srcs: [
+        ":OsiCompatSources",
+        ":TestCommonMainHandler",
+        ":TestCommonMockFunctions",
+        ":TestCommonStackConfig",
+        ":TestMockBta",
+        ":TestMockBtif",
+        ":TestMockDevice",
+        ":TestMockHci",
+        ":TestMockLegacyHciCommands",
+        ":TestMockLegacyHciInterface",
+        ":TestMockMainShim",
+        ":TestMockStackBtm",
+        ":TestMockStackBtu",
+        ":TestMockStackCryptotoolbox",
+        ":TestMockStackGatt",
+        ":TestMockStackHcic",
+        ":TestMockStackL2cap",
+        ":TestMockStackMetrics",
+        ":TestMockStackSdp",
+        ":TestMockStackSmp",
+        "acl/*.cc",
+        "test/stack_acl_test.cc",
+    ],
+    static_libs: [
+        "libbt-common",
+        "libbt-protos-lite",
+        "libgmock",
+        "liblog",
+        "libosi",
+    ],
+    shared_libs: [
+        "libbinder_ndk",
+        "libcrypto",
+        "libflatbuffers-cpp",
+        "libprotobuf-cpp-lite",
+    ],
+    sanitize: {
+        address: true,
+        all_undefined: true,
+        cfi: true,
+        integer_overflow: true,
+        scs: true,
+        diag: {
+            undefined : true
+        },
+    },
+}
+
+// Bluetooth stack connection multiplexing
+cc_test {
+    name: "net_test_stack_sdp",
+    test_suites: ["device-tests"],
+    host_supported: true,
+    defaults: [
+        "fluoride_defaults",
+        "mts_defaults",
+    ],
+    local_include_dirs: [
+        "include",
+        "test/common",
+    ],
+    include_dirs: [
+        "packages/modules/Bluetooth/system",
+        "packages/modules/Bluetooth/system/device/include/",
+        "packages/modules/Bluetooth/system/gd",
+        "packages/modules/Bluetooth/system/internal_include",
+        "packages/modules/Bluetooth/system/utils/include",
+    ],
+    srcs: [
+        ":TestCommonMockFunctions",
+        ":TestMockBtif",
+        ":TestMockOsi",
+        ":TestMockStackL2cap",
+        ":TestMockStackMetrics",
+        "sdp/sdp_api.cc",
+        "sdp/sdp_discovery.cc",
+        "sdp/sdp_server.cc",
+        "sdp/sdp_db.cc",
+        "sdp/sdp_main.cc",
+        "sdp/sdp_utils.cc",
+        "test/sdp/stack_sdp_test.cc",
+        "test/sdp/stack_sdp_utils_test.cc",
+    ],
+    shared_libs: [
+        "libcutils",
+    ],
+    static_libs: [
+        "libbt-common",
+        "libbluetooth-types",
+        "liblog",
+        "libgmock",
+    ],
 }

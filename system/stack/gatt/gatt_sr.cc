@@ -178,6 +178,9 @@ static void build_read_multi_rsp(tGATT_SR_CMD* p_cmd, uint16_t mtu) {
 
     if (p_rsp != NULL) {
       total_len = (p_buf->len + p_rsp->attr_value.len);
+      if (p_cmd->multi_req.variable_len) {
+        total_len += 2;
+      }
 
       if (total_len > mtu) {
         /* just send the partial response for the overflow case */
@@ -283,7 +286,7 @@ tGATT_STATUS gatt_sr_process_app_rsp(tGATT_TCB& tcb, tGATT_IF gatt_if,
                                      tGATTS_RSP* p_msg,
                                      tGATT_SR_CMD* sr_res_p) {
   tGATT_STATUS ret_code = GATT_SUCCESS;
-  uint16_t payload_size = gatt_tcb_get_payload_size_rx(tcb, sr_res_p->cid);
+  uint16_t payload_size = gatt_tcb_get_payload_size_tx(tcb, sr_res_p->cid);
 
   VLOG(1) << __func__ << " gatt_if=" << +gatt_if;
 
@@ -305,8 +308,8 @@ tGATT_STATUS gatt_sr_process_app_rsp(tGATT_TCB& tcb, tGATT_IF gatt_if,
 
     if (gatt_sr_is_cback_cnt_zero(tcb) && status == GATT_SUCCESS) {
       if (sr_res_p->p_rsp_msg == NULL) {
-        sr_res_p->p_rsp_msg = attp_build_sr_msg(tcb, (uint8_t)(op_code + 1),
-                                                (tGATT_SR_MSG*)p_msg);
+        sr_res_p->p_rsp_msg = attp_build_sr_msg(
+            tcb, (uint8_t)(op_code + 1), (tGATT_SR_MSG*)p_msg, payload_size);
       } else {
         LOG(ERROR) << "Exception!!! already has respond message";
       }
@@ -360,7 +363,6 @@ void gatt_process_exec_write_req(tGATT_TCB& tcb, uint16_t cid, uint8_t op_code,
 #endif
 
   if (len < sizeof(flag)) {
-    android_errorWriteLog(0x534e4554, "73172115");
     LOG(ERROR) << __func__ << "invalid length";
     gatt_send_error_rsp(tcb, cid, GATT_INVALID_PDU, GATT_REQ_EXEC_WRITE, 0,
                         false);
@@ -825,7 +827,8 @@ static void gatts_process_mtu_req(tGATT_TCB& tcb, uint16_t cid, uint16_t len,
 
   tGATT_SR_MSG gatt_sr_msg;
   gatt_sr_msg.mtu = tcb.payload_size;
-  BT_HDR* p_buf = attp_build_sr_msg(tcb, GATT_RSP_MTU, &gatt_sr_msg);
+  BT_HDR* p_buf =
+      attp_build_sr_msg(tcb, GATT_RSP_MTU, &gatt_sr_msg, tcb.payload_size);
   attp_send_sr_msg(tcb, cid, p_buf);
 
   tGATTS_DATA gatts_data;
@@ -1037,7 +1040,6 @@ static void gatts_process_read_req(tGATT_TCB& tcb, uint16_t cid,
     /* Error: packet length is too short */
     LOG(ERROR) << __func__ << ": packet length=" << len
                << " too short. min=" << sizeof(uint16_t);
-    android_errorWriteWithInfoLog(0x534e4554, "73172115", -1, NULL, 0);
     gatt_send_error_rsp(tcb, cid, GATT_INVALID_PDU, op_code, 0, false);
     return;
   }

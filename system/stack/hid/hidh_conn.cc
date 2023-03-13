@@ -78,6 +78,7 @@ static const tL2CAP_APPL_INFO hst_reg_info = {
     .pL2CA_CreditBasedConnectInd_Cb = nullptr,
     .pL2CA_CreditBasedConnectCfm_Cb = nullptr,
     .pL2CA_CreditBasedReconfigCompleted_Cb = nullptr,
+    .pL2CA_CreditBasedCollisionInd_Cb = nullptr,
 };
 static void hidh_try_repage(uint8_t dhandle);
 
@@ -655,7 +656,6 @@ static void hidh_l2cif_data_ind(uint16_t l2cap_cid, BT_HDR* p_msg) {
     HIDH_TRACE_WARNING("Rcvd L2CAP data, invalid length %d, should be >= 1",
                        p_msg->len);
     osi_free(p_msg);
-    android_errorWriteLog(0x534e4554, "80493272");
     return;
   }
 

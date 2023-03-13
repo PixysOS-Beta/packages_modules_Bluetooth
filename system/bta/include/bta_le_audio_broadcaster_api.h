@@ -26,15 +26,7 @@
 /* Interface class */
 class LeAudioBroadcaster {
  public:
-  typedef std::array<uint8_t, 16> Code;
-
-  enum class AudioProfile {
-    SONIFICATION = 0,
-    MEDIA = 1,
-  };
-
   static constexpr uint8_t kInstanceIdUndefined = 0xFF;
-  static constexpr AudioProfile kDefaultAudioProfile = AudioProfile::MEDIA;
 
   virtual ~LeAudioBroadcaster(void) = default;
 
@@ -47,26 +39,24 @@ class LeAudioBroadcaster {
   static bool IsLeAudioBroadcasterRunning(void);
   static void DebugDump(int fd);
 
-  virtual void CreateAudioBroadcast(std::vector<uint8_t> metadata,
-                                    AudioProfile profile,
-                                    std::optional<LeAudioBroadcaster::Code>
-                                        broadcast_code = std::nullopt) = 0;
-  virtual void SuspendAudioBroadcast(uint8_t instance_id) = 0;
-  virtual void StartAudioBroadcast(uint8_t instance_id) = 0;
-  virtual void StopAudioBroadcast(uint8_t instance_id) = 0;
-  virtual void DestroyAudioBroadcast(uint8_t instance_id) = 0;
-  virtual void GetBroadcastId(uint8_t instance_id) = 0;
+  virtual void CreateAudioBroadcast(
+      std::vector<uint8_t> metadata,
+      std::optional<bluetooth::le_audio::BroadcastCode> broadcast_code =
+          std::nullopt) = 0;
+  virtual void SuspendAudioBroadcast(uint32_t broadcast_id) = 0;
+  virtual void StartAudioBroadcast(uint32_t broadcast_id) = 0;
+  virtual void StopAudioBroadcast(uint32_t broadcast_id) = 0;
+  virtual void DestroyAudioBroadcast(uint32_t broadcast_id) = 0;
+  virtual void GetBroadcastMetadata(uint32_t broadcast_id) = 0;
   virtual void GetAllBroadcastStates(void) = 0;
-  virtual void UpdateMetadata(uint8_t instance_id,
+  virtual void UpdateMetadata(uint32_t broadcast_id,
                               std::vector<uint8_t> metadata) = 0;
   virtual void IsValidBroadcast(
-      uint8_t instance_id, uint8_t addr_type, RawAddress addr,
-      base::Callback<void(uint8_t /* instance_id */, uint8_t /* addr_type */,
+      uint32_t broadcast_id, uint8_t addr_type, RawAddress addr,
+      base::Callback<void(uint8_t /* broadcast_id */, uint8_t /* addr_type */,
                           RawAddress /* addr */, bool /* is_valid */)>
           cb) = 0;
 
-  virtual void SetNumRetransmit(uint8_t count) = 0;
-  virtual uint8_t GetNumRetransmit(void) const = 0;
   virtual void SetStreamingPhy(uint8_t phy) = 0;
   virtual uint8_t GetStreamingPhy(void) const = 0;
 };

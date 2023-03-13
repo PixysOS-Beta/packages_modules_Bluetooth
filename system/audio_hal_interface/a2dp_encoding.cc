@@ -16,7 +16,7 @@
 
 #include "a2dp_encoding.h"
 
-#include "aidl/a2dp_encoding.h"
+#include "aidl/a2dp_encoding_aidl.h"
 #include "hal_version_manager.h"
 #include "hidl/a2dp_encoding_hidl.h"
 
@@ -138,13 +138,20 @@ void set_remote_delay(uint16_t delay_report) {
 }
 
 // Set low latency buffer mode allowed or disallowed
-bool set_audio_low_latency_mode_allowed(bool allowed){
+void set_audio_low_latency_mode_allowed(bool allowed) {
   if (HalVersionManager::GetHalTransport() ==
-      BluetoothAudioHalTransport::HIDL) {
-    hidl::a2dp::set_low_latency_mode_allowed(allowed);
+      BluetoothAudioHalTransport::AIDL) {
+    aidl::a2dp::set_low_latency_mode_allowed(allowed);
+  }
+}
+
+// Check if OPUS codec is supported
+bool is_opus_supported() {
+  // OPUS codec was added after HIDL HAL was frozen
+  if (HalVersionManager::GetHalTransport() ==
+      BluetoothAudioHalTransport::AIDL) {
     return true;
   }
-  aidl::a2dp::set_low_latency_mode_allowed(allowed);
   return false;
 }
 

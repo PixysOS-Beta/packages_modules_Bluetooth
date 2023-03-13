@@ -41,6 +41,10 @@ struct IsoManager::impl {
     iso_impl_.reset();
   }
 
+  void Dump(int fd) {
+    if (iso_impl_) iso_impl_->dump(fd);
+  }
+
   bool IsRunning() { return iso_impl_ ? true : false; }
 
   const IsoManager& iso_manager_;
@@ -67,8 +71,8 @@ void IsoManager::ReconfigureCig(
   pimpl_->iso_impl_->reconfigure_cig(cig_id, std::move(cig_params));
 }
 
-void IsoManager::RemoveCig(uint8_t cig_id) {
-  pimpl_->iso_impl_->remove_cig(cig_id);
+void IsoManager::RemoveCig(uint8_t cig_id, bool force) {
+  pimpl_->iso_impl_->remove_cig(cig_id, force);
 }
 
 void IsoManager::EstablishCis(
@@ -141,6 +145,10 @@ void IsoManager::Start() {
 void IsoManager::Stop() {
   if (pimpl_->IsRunning())
     pimpl_->Stop();
+}
+
+void IsoManager::Dump(int fd) {
+  if (pimpl_->IsRunning()) pimpl_->Dump(fd);
 }
 
 IsoManager::~IsoManager() = default;

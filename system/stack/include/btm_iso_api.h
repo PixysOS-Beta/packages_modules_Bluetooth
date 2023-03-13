@@ -107,8 +107,9 @@ class IsoManager {
    * Initiates removing of connected isochronous group (CIG).
    *
    * @param cig_id connected isochronous group id
+   * @param force do not check if CIG exist
    */
-  virtual void RemoveCig(uint8_t cig_id);
+  virtual void RemoveCig(uint8_t cig_id, bool force = false);
 
   /**
    * Initiates creation of connected isochronous stream (CIS).
@@ -232,6 +233,11 @@ class IsoManager {
    * Stops the IsoManager module
    */
   void Stop();
+
+  /**
+   * Dumps the IsoManager module state
+   */
+  void Dump(int fd);
 
  private:
   struct impl;

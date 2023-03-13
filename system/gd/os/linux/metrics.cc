@@ -80,6 +80,7 @@ void LogMetricLinkLayerConnectionEvent(
 
 void LogMetricManufacturerInfo(
     const Address& address,
+    android::bluetooth::AddressTypeEnum address_type,
     android::bluetooth::DeviceInfoSrcEnum source_type,
     const std::string& source_name,
     const std::string& manufacturer,
@@ -101,6 +102,21 @@ void LogMetricA2dpPlaybackEvent(const Address& address, int playback_state, int 
 
 void LogMetricBluetoothHalCrashReason(
     const Address& address, uint32_t error_code, uint32_t vendor_error_code) {}
+
+void LogMetricBluetoothLocalSupportedFeatures(uint32_t page_num, uint64_t features) {}
+
+void LogMetricBluetoothLocalVersions(
+    uint32_t lmp_manufacturer_name,
+    uint8_t lmp_version,
+    uint32_t lmp_subversion,
+    uint8_t hci_version,
+    uint32_t hci_revision) {}
+
+void LogMetricBluetoothDisconnectionReasonReported(
+    uint32_t reason, const Address& address, uint32_t connection_handle) {}
+
+void LogMetricBluetoothRemoteSupportedFeatures(
+    const Address& address, uint32_t page, uint64_t features, uint32_t connection_handle) {}
 
 void LogMetricBluetoothCodePathCounterMetrics(int32_t key, int64_t count) {}
 

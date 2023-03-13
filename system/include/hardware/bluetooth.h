@@ -282,11 +282,11 @@ typedef enum {
    */
   BT_PROPERTY_ADAPTER_BONDED_DEVICES,
   /**
-   * Description - Bluetooth Adapter Discovery timeout (in seconds)
+   * Description - Bluetooth Adapter Discoverable timeout (in seconds)
    * Access mode - GET and SET
    * Data type   - uint32_t
    */
-  BT_PROPERTY_ADAPTER_DISCOVERY_TIMEOUT,
+  BT_PROPERTY_ADAPTER_DISCOVERABLE_TIMEOUT,
 
   /* Properties unique to remote device */
   /**
@@ -458,6 +458,12 @@ typedef void (*bond_state_changed_callback)(bt_status_t status,
 typedef void (*address_consolidate_callback)(RawAddress* main_bd_addr,
                                              RawAddress* secondary_bd_addr);
 
+/** Bluetooth LE Address association callback */
+/* Callback for the upper layer to associate the LE-only device's RPA to the
+ * identity address */
+typedef void (*le_address_associate_callback)(RawAddress* main_bd_addr,
+                                              RawAddress* secondary_bd_addr);
+
 /** Bluetooth ACL connection state changed callback */
 typedef void (*acl_state_changed_callback)(bt_status_t status,
                                            RawAddress* remote_bd_addr,
@@ -473,6 +479,9 @@ typedef void (*link_quality_report_callback)(
 
 /** Switch the buffer size callback */
 typedef void (*switch_buffer_size_callback)(bool is_low_latency_buffer_size);
+
+/** Switch the codec callback */
+typedef void (*switch_codec_callback)(bool is_low_latency_buffer_size);
 
 typedef enum { ASSOCIATE_JVM, DISASSOCIATE_JVM } bt_cb_thread_evt;
 
@@ -524,6 +533,7 @@ typedef struct {
   ssp_request_callback ssp_request_cb;
   bond_state_changed_callback bond_state_changed_cb;
   address_consolidate_callback address_consolidate_cb;
+  le_address_associate_callback le_address_associate_cb;
   acl_state_changed_callback acl_state_changed_cb;
   callback_thread_event thread_evt_cb;
   dut_mode_recv_callback dut_mode_recv_cb;
@@ -532,6 +542,7 @@ typedef struct {
   link_quality_report_callback link_quality_report_cb;
   generate_local_oob_data_callback generate_local_oob_data_cb;
   switch_buffer_size_callback switch_buffer_size_cb;
+  switch_codec_callback switch_codec_cb;
 } bt_callbacks_t;
 
 typedef void (*alarm_cb)(void* data);
@@ -590,7 +601,8 @@ typedef struct {
    */
   int (*init)(bt_callbacks_t* callbacks, bool guest_mode,
               bool is_common_criteria_mode, int config_compare_result,
-              const char** init_flags, bool is_atv);
+              const char** init_flags, bool is_atv,
+              const char* user_data_directory);
 
   /** Enable Bluetooth. */
   int (*enable)();
@@ -771,6 +783,22 @@ typedef struct {
    * @return true if audio low latency is successfully allowed or disallowed
    */
   bool (*allow_low_latency_audio)(bool allowed, const RawAddress& address);
+
+  /**
+   * Set the event filter for the controller
+   */
+  int (*clear_event_filter)();
+
+  /**
+   * Data passed from BluetoothDevice.metadata_changed
+   *
+   * @param remote_bd_addr remote address
+   * @param key Metadata key
+   * @param value Metadata value
+   */
+  void (*metadata_changed)(const RawAddress& remote_bd_addr, int key,
+                           std::vector<uint8_t> value);
+
 } bt_interface_t;
 
 #define BLUETOOTH_INTERFACE_STRING "bluetoothInterface"

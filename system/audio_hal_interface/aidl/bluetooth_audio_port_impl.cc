@@ -32,9 +32,9 @@ BluetoothAudioPortImpl::BluetoothAudioPortImpl(
 
 BluetoothAudioPortImpl::~BluetoothAudioPortImpl() {}
 
-ndk::ScopedAStatus BluetoothAudioPortImpl::startStream() {
+ndk::ScopedAStatus BluetoothAudioPortImpl::startStream(bool is_low_latency) {
   StopWatchLegacy stop_watch(__func__);
-  BluetoothAudioCtrlAck ack = transport_instance_->StartRequest();
+  BluetoothAudioCtrlAck ack = transport_instance_->StartRequest(is_low_latency);
   if (ack != BluetoothAudioCtrlAck::PENDING) {
     auto aidl_retval =
         provider_->streamStarted(BluetoothAudioCtrlAckToHalStatus(ack));
@@ -137,6 +137,7 @@ ndk::ScopedAStatus BluetoothAudioPortImpl::setLatencyMode(
     LatencyMode latency_mode) {
   bool is_low_latency = latency_mode == LatencyMode::LOW_LATENCY ? true : false;
   invoke_switch_buffer_size_cb(is_low_latency);
+  transport_instance_->SetLowLatency(is_low_latency);
   return ndk::ScopedAStatus::ok();
 }
 

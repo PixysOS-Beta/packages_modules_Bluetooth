@@ -26,6 +26,7 @@
 
 #include <base/logging.h>
 #include <base/strings/stringprintf.h>
+#include <log/log.h>
 
 #include "bt_target.h"
 #include "bta/include/bta_hearing_aid_api.h"
@@ -43,6 +44,12 @@
 #include "stack/l2cap/l2c_int.h"
 #include "stack_config.h"
 #include "types/raw_address.h"
+
+namespace {
+
+constexpr char kBtmLogTag[] = "L2CAP";
+
+}
 
 tL2CAP_LE_RESULT_CODE btm_ble_start_sec_check(const RawAddress& bd_addr,
                                               uint16_t psm, bool is_originator,
@@ -404,6 +411,30 @@ void l2cble_process_conn_update_evt(uint16_t handle, uint8_t status,
 
 /*******************************************************************************
  *
+ * Function         l2cble_handle_connect_rsp_neg
+ *
+ * Description      This function sends error message to all the
+ *                  outstanding channels
+ *
+ * Returns          void
+ *
+ ******************************************************************************/
+static void l2cble_handle_connect_rsp_neg(tL2C_LCB* p_lcb,
+                                          tL2C_CONN_INFO* con_info) {
+  tL2C_CCB* temp_p_ccb = NULL;
+  for (int i = 0; i < p_lcb->pending_ecoc_conn_cnt; i++) {
+    uint16_t cid = p_lcb->pending_ecoc_connection_cids[i];
+    temp_p_ccb = l2cu_find_ccb_by_cid(p_lcb, cid);
+    l2c_csm_execute(temp_p_ccb, L2CEVT_L2CAP_CREDIT_BASED_CONNECT_RSP_NEG,
+                    con_info);
+  }
+
+  p_lcb->pending_ecoc_conn_cnt = 0;
+  memset(p_lcb->pending_ecoc_connection_cids, 0, L2CAP_CREDIT_BASED_MAX_CIDS);
+}
+
+/*******************************************************************************
+ *
  * Function         l2cble_process_sig_cmd
  *
  * Description      This function is called when a signalling packet is received
@@ -427,7 +458,6 @@ void l2cble_process_sig_cmd(tL2C_LCB* p_lcb, uint8_t* p, uint16_t pkt_len) {
   p_pkt_end = p + pkt_len;
 
   if (p + 4 > p_pkt_end) {
-    android_errorWriteLog(0x534e4554, "80261585");
     LOG(ERROR) << "invalid read";
     return;
   }
@@ -445,9 +475,16 @@ void l2cble_process_sig_cmd(tL2C_LCB* p_lcb, uint8_t* p, uint16_t pkt_len) {
   }
 
   switch (cmd_code) {
-    case L2CAP_CMD_REJECT:
-      p += 2;
-      break;
+    case L2CAP_CMD_REJECT: {
+      uint16_t reason;
+      STREAM_TO_UINT16(reason, p);
+
+      if (reason == L2CAP_CMD_REJ_NOT_UNDERSTOOD &&
+          p_lcb->pending_ecoc_conn_cnt > 0) {
+        con_info.l2cap_result = L2CAP_LE_RESULT_NO_PSM;
+        l2cble_handle_connect_rsp_neg(p_lcb, &con_info);
+      }
+    } break;
 
     case L2CAP_CMD_ECHO_REQ:
     case L2CAP_CMD_ECHO_RSP:
@@ -458,7 +495,6 @@ void l2cble_process_sig_cmd(tL2C_LCB* p_lcb, uint8_t* p, uint16_t pkt_len) {
 
     case L2CAP_CMD_BLE_UPDATE_REQ:
       if (p + 8 > p_pkt_end) {
-        android_errorWriteLog(0x534e4554, "80261585");
         LOG(ERROR) << "invalid read";
         return;
       }
@@ -516,6 +552,14 @@ void l2cble_process_sig_cmd(tL2C_LCB* p_lcb, uint8_t* p, uint16_t pkt_len) {
 
       /* Check how many channels remote side wants. */
       num_of_channels = (p_pkt_end - p) / sizeof(uint16_t);
+      if (num_of_channels > L2CAP_CREDIT_BASED_MAX_CIDS) {
+        LOG_WARN("L2CAP - invalid number of channels requested: %d",
+                 num_of_channels);
+        l2cu_reject_credit_based_conn_req(p_lcb, id,
+                                          L2CAP_CREDIT_BASED_MAX_CIDS,
+                                          L2CAP_LE_RESULT_INVALID_PARAMETERS);
+        return;
+      }
 
       LOG_DEBUG(
           "Recv L2CAP_CMD_CREDIT_BASED_CONN_REQ with "
@@ -525,15 +569,6 @@ void l2cble_process_sig_cmd(tL2C_LCB* p_lcb, uint8_t* p, uint16_t pkt_len) {
           "num_of_channels = %d",
           mtu, mps, initial_credit, num_of_channels);
 
-      if (p_lcb->pending_ecoc_conn_cnt > 0) {
-        LOG_WARN("L2CAP - L2CAP_CMD_CREDIT_BASED_CONN_REQ collision:");
-        l2cu_reject_credit_based_conn_req(p_lcb, id, num_of_channels,
-                                          L2CAP_LE_RESULT_NO_RESOURCES);
-        return;
-      }
-
-      p_lcb->pending_ecoc_conn_cnt = num_of_channels;
-
       /* Check PSM Support */
       p_rcb = l2cu_find_ble_rcb_by_psm(con_info.psm);
       if (p_rcb == NULL) {
@@ -542,6 +577,19 @@ void l2cble_process_sig_cmd(tL2C_LCB* p_lcb, uint8_t* p, uint16_t pkt_len) {
                                           L2CAP_LE_RESULT_NO_PSM);
         return;
       }
+
+      if (p_lcb->pending_ecoc_conn_cnt > 0) {
+        LOG_WARN("L2CAP - L2CAP_CMD_CREDIT_BASED_CONN_REQ collision:");
+        if (p_rcb->api.pL2CA_CreditBasedCollisionInd_Cb &&
+            con_info.psm == BT_PSM_EATT) {
+          (*p_rcb->api.pL2CA_CreditBasedCollisionInd_Cb)(p_lcb->remote_bd_addr);
+        }
+        l2cu_reject_credit_based_conn_req(p_lcb, id, num_of_channels,
+                                          L2CAP_LE_RESULT_NO_RESOURCES);
+        return;
+      }
+
+      p_lcb->pending_ecoc_conn_cnt = num_of_channels;
 
       if (!p_rcb->api.pL2CA_CreditBasedConnectInd_Cb) {
         LOG_WARN("L2CAP - rcvd conn req for outgoing-only connection PSM: %d",
@@ -659,8 +707,9 @@ void l2cble_process_sig_cmd(tL2C_LCB* p_lcb, uint8_t* p, uint16_t pkt_len) {
           con_info.l2cap_result == L2CAP_LE_RESULT_INSUFFICIENT_AUTHORIZATION ||
           con_info.l2cap_result == L2CAP_LE_RESULT_UNACCEPTABLE_PARAMETERS ||
           con_info.l2cap_result == L2CAP_LE_RESULT_INVALID_PARAMETERS) {
-        l2c_csm_execute(p_ccb, L2CEVT_L2CAP_CREDIT_BASED_CONNECT_RSP_NEG,
-                        &con_info);
+        L2CAP_TRACE_ERROR("L2CAP - not accepted. Status %d",
+                          con_info.l2cap_result);
+        l2cble_handle_connect_rsp_neg(p_lcb, &con_info);
         return;
       }
 
@@ -669,9 +718,8 @@ void l2cble_process_sig_cmd(tL2C_LCB* p_lcb, uint8_t* p, uint16_t pkt_len) {
           mps < L2CAP_CREDIT_BASED_MIN_MPS || mps > L2CAP_LE_MAX_MPS) {
         L2CAP_TRACE_ERROR("L2CAP - invalid params");
         con_info.l2cap_result = L2CAP_LE_RESULT_INVALID_PARAMETERS;
-        l2c_csm_execute(p_ccb, L2CEVT_L2CAP_CREDIT_BASED_CONNECT_RSP_NEG,
-                        &con_info);
-        break;
+        l2cble_handle_connect_rsp_neg(p_lcb, &con_info);
+        return;
       }
 
       /* At least some of the channels has been created and parameters are
@@ -696,10 +744,44 @@ void l2cble_process_sig_cmd(tL2C_LCB* p_lcb, uint8_t* p, uint16_t pkt_len) {
 
       con_info.peer_mtu = mtu;
 
-      for (int i = 0; i < p_lcb->pending_ecoc_conn_cnt; i++) {
-        uint16_t cid = p_lcb->pending_ecoc_connection_cids[i];
+      /* Copy request data and clear it so user can perform another connect if
+       * needed in the callback. */
+      p_lcb->pending_ecoc_conn_cnt = 0;
+      uint16_t cids[L2CAP_CREDIT_BASED_MAX_CIDS];
+      std::copy_n(p_lcb->pending_ecoc_connection_cids,
+                  L2CAP_CREDIT_BASED_MAX_CIDS, cids);
+      std::fill_n(p_lcb->pending_ecoc_connection_cids,
+                  L2CAP_CREDIT_BASED_MAX_CIDS, 0);
+
+      for (int i = 0; i < num_of_channels; i++) {
+        uint16_t cid = cids[i];
+        STREAM_TO_UINT16(rcid, p);
+
+        if (rcid != 0) {
+          /* If remote cid is duplicated then disconnect original channel
+           * and current channel by sending event to upper layer
+           */
+          temp_p_ccb = l2cu_find_ccb_by_remote_cid(p_lcb, rcid);
+          if (temp_p_ccb != nullptr) {
+            L2CAP_TRACE_ERROR(
+                "Already Allocated Destination cid. "
+                "rcid = %d "
+                "send peer_disc_req",
+                rcid);
+
+            l2cu_send_peer_disc_req(temp_p_ccb);
+
+            temp_p_ccb = l2cu_find_ccb_by_cid(p_lcb, cid);
+            con_info.l2cap_result = L2CAP_LE_RESULT_UNACCEPTABLE_PARAMETERS;
+            l2c_csm_execute(temp_p_ccb,
+                            L2CEVT_L2CAP_CREDIT_BASED_CONNECT_RSP_NEG,
+                            &con_info);
+            continue;
+          }
+        }
+
         temp_p_ccb = l2cu_find_ccb_by_cid(p_lcb, cid);
-        STREAM_TO_UINT16(temp_p_ccb->remote_cid, p);
+        temp_p_ccb->remote_cid = rcid;
 
         L2CAP_TRACE_DEBUG(
             "local cid = %d "
@@ -726,10 +808,6 @@ void l2cble_process_sig_cmd(tL2C_LCB* p_lcb, uint8_t* p, uint16_t pkt_len) {
                           &con_info);
         }
       }
-
-      p_lcb->pending_ecoc_conn_cnt = 0;
-      memset(p_lcb->pending_ecoc_connection_cids, 0,
-             L2CAP_CREDIT_BASED_MAX_CIDS);
 
       break;
     case L2CAP_CMD_CREDIT_BASED_RECONFIG_REQ: {
@@ -779,7 +857,7 @@ void l2cble_process_sig_cmd(tL2C_LCB* p_lcb, uint8_t* p, uint16_t pkt_len) {
           return;
         }
 
-        if (p_ccb->peer_conn_cfg.mps > mps) {
+        if (p_ccb->peer_conn_cfg.mps > mps && num_of_channels > 1) {
           L2CAP_TRACE_WARNING(
               "L2CAP - rcvd config req mps reduction new mps < mps (%d < %d)",
               mtu, p_ccb->peer_conn_cfg.mtu);
@@ -813,7 +891,6 @@ void l2cble_process_sig_cmd(tL2C_LCB* p_lcb, uint8_t* p, uint16_t pkt_len) {
     case L2CAP_CMD_CREDIT_BASED_RECONFIG_RES: {
       uint16_t result;
       if (p + sizeof(uint16_t) > p_pkt_end) {
-        android_errorWriteLog(0x534e4554, "212694559");
         LOG(ERROR) << "invalid read";
         return;
       }
@@ -847,7 +924,6 @@ void l2cble_process_sig_cmd(tL2C_LCB* p_lcb, uint8_t* p, uint16_t pkt_len) {
 
     case L2CAP_CMD_BLE_CREDIT_BASED_CONN_REQ:
       if (p + 10 > p_pkt_end) {
-        android_errorWriteLog(0x534e4554, "80261585");
         LOG(ERROR) << "invalid read";
         return;
       }
@@ -943,7 +1019,6 @@ void l2cble_process_sig_cmd(tL2C_LCB* p_lcb, uint8_t* p, uint16_t pkt_len) {
       if (p_ccb) {
         L2CAP_TRACE_DEBUG("I remember the connection req");
         if (p + 10 > p_pkt_end) {
-          android_errorWriteLog(0x534e4554, "80261585");
           LOG(ERROR) << "invalid read";
           return;
         }
@@ -994,7 +1069,6 @@ void l2cble_process_sig_cmd(tL2C_LCB* p_lcb, uint8_t* p, uint16_t pkt_len) {
 
     case L2CAP_CMD_BLE_FLOW_CTRL_CREDIT:
       if (p + 4 > p_pkt_end) {
-        android_errorWriteLog(0x534e4554, "80261585");
         LOG(ERROR) << "invalid read";
         return;
       }
@@ -1014,7 +1088,6 @@ void l2cble_process_sig_cmd(tL2C_LCB* p_lcb, uint8_t* p, uint16_t pkt_len) {
 
     case L2CAP_CMD_DISC_REQ:
       if (p + 4 > p_pkt_end) {
-        android_errorWriteLog(0x534e4554, "74121659");
         return;
       }
       STREAM_TO_UINT16(lcid, p);
@@ -1027,13 +1100,12 @@ void l2cble_process_sig_cmd(tL2C_LCB* p_lcb, uint8_t* p, uint16_t pkt_len) {
           l2c_csm_execute(p_ccb, L2CEVT_L2CAP_DISCONNECT_REQ, NULL);
         }
       } else
-        l2cu_send_peer_disc_rsp(p_lcb, id, lcid, rcid);
+        l2cu_send_peer_cmd_reject(p_lcb, L2CAP_CMD_REJ_INVALID_CID, id, 0, 0);
 
       break;
 
     case L2CAP_CMD_DISC_RSP:
       if (p + 4 > p_pkt_end) {
-        android_errorWriteLog(0x534e4554, "80261585");
         LOG(ERROR) << "invalid read";
         return;
       }
@@ -1293,16 +1365,32 @@ void l2cble_update_data_length(tL2C_LCB* p_lcb) {
  * Returns          void
  *
  ******************************************************************************/
+static bool is_legal_tx_data_len(const uint16_t& tx_data_len) {
+  return (tx_data_len >= 0x001B && tx_data_len <= 0x00FB);
+}
+
 void l2cble_process_data_length_change_event(uint16_t handle,
                                              uint16_t tx_data_len,
                                              uint16_t rx_data_len) {
   tL2C_LCB* p_lcb = l2cu_find_lcb_by_handle(handle);
+  if (p_lcb == nullptr) {
+    LOG_WARN("Received data length change event for unknown ACL handle:0x%04x",
+             handle);
+    return;
+  }
 
-  L2CAP_TRACE_DEBUG("%s TX data len = %d", __func__, tx_data_len);
-  if (p_lcb == NULL) return;
-
-  if (tx_data_len > 0) p_lcb->tx_data_len = tx_data_len;
-
+  if (is_legal_tx_data_len(tx_data_len)) {
+    LOG_DEBUG("Received data length change event for device:%s tx_data_len:%hu",
+              PRIVATE_ADDRESS(p_lcb->remote_bd_addr), tx_data_len);
+    p_lcb->tx_data_len = tx_data_len;
+    BTM_LogHistory(kBtmLogTag, p_lcb->remote_bd_addr, "LE Data length change",
+                   base::StringPrintf("tx_octets:%hu", tx_data_len));
+  } else {
+    LOG_WARN(
+        "Received illegal data length change event for device:%s "
+        "tx_data_len:%hu",
+        PRIVATE_ADDRESS(p_lcb->remote_bd_addr), tx_data_len);
+  }
   /* ignore rx_data len for now */
 }
 

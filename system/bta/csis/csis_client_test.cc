@@ -75,12 +75,12 @@ RawAddress GetTestAddress(int index) {
 class MockCsisLockCallback {
  public:
   MockCsisLockCallback() = default;
+  MockCsisLockCallback(const MockCsisLockCallback&) = delete;
+  MockCsisLockCallback& operator=(const MockCsisLockCallback&) = delete;
+
   ~MockCsisLockCallback() = default;
   MOCK_METHOD((void), CsisGroupLockCb,
               (int group_id, bool locked, CsisGroupLockStatus status));
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(MockCsisLockCallback);
 };
 
 static MockCsisLockCallback* csis_lock_callback_mock;
@@ -93,13 +93,16 @@ void SetMockCsisLockCallback(MockCsisLockCallback* mock) {
 class MockCsisCallbacks : public CsisClientCallbacks {
  public:
   MockCsisCallbacks() = default;
+  MockCsisCallbacks(const MockCsisCallbacks&) = delete;
+  MockCsisCallbacks& operator=(const MockCsisCallbacks&) = delete;
+
   ~MockCsisCallbacks() override = default;
 
   MOCK_METHOD((void), OnConnectionState,
               (const RawAddress& address, ConnectionState state), (override));
   MOCK_METHOD((void), OnDeviceAvailable,
               (const RawAddress& address, int group_id, int group_size,
-               const bluetooth::Uuid& uuid),
+               int rank, const bluetooth::Uuid& uuid),
               (override));
   MOCK_METHOD((void), OnSetMemberAvailable,
               (const RawAddress& address, int group_id), (override));
@@ -110,9 +113,6 @@ class MockCsisCallbacks : public CsisClientCallbacks {
   MOCK_METHOD((void), OnGattCsisWriteLockRsp,
               (uint16_t conn_id, tGATT_STATUS status, uint16_t handle,
                void* data));
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(MockCsisCallbacks);
 };
 
 class CsisClientTest : public ::testing::Test {
@@ -426,7 +426,8 @@ class CsisClientTest : public ::testing::Test {
         .WillByDefault(
             DoAll(SetArgPointee<1>(BTM_SEC_FLAG_ENCRYPTED), Return(true)));
 
-    EXPECT_CALL(gatt_interface, Open(gatt_if, address, true, _));
+    EXPECT_CALL(gatt_interface,
+                Open(gatt_if, address, BTM_BLE_DIRECT_CONNECTION, _));
     CsisClient::Get()->Connect(address);
     Mock::VerifyAndClearExpectations(&gatt_interface);
     Mock::VerifyAndClearExpectations(&btm_interface);
@@ -448,8 +449,9 @@ class CsisClientTest : public ::testing::Test {
     EXPECT_CALL(*callbacks,
                 OnConnectionState(address, ConnectionState::CONNECTED))
         .Times(1);
-    EXPECT_CALL(*callbacks, OnDeviceAvailable(address, _, _, _)).Times(1);
-    EXPECT_CALL(gatt_interface, Open(gatt_if, address, false, _))
+    EXPECT_CALL(*callbacks, OnDeviceAvailable(address, _, _, _, _)).Times(1);
+    EXPECT_CALL(gatt_interface,
+                Open(gatt_if, address, BTM_BLE_BKG_CONNECT_ALLOW_LIST, _))
         .WillOnce(Invoke([this, conn_id](tGATT_IF client_if,
                                          const RawAddress& remote_bda,
                                          bool is_direct, bool opportunistic) {
@@ -647,7 +649,7 @@ TEST_F(CsisClientTest, test_discovery_csis_found) {
   TestConnect(test_address);
   EXPECT_CALL(*callbacks,
               OnConnectionState(test_address, ConnectionState::CONNECTED));
-  EXPECT_CALL(*callbacks, OnDeviceAvailable(test_address, _, _, _));
+  EXPECT_CALL(*callbacks, OnDeviceAvailable(test_address, _, _, _, _));
   InjectConnectedEvent(test_address, 1);
   GetSearchCompleteEvent(1);
   Mock::VerifyAndClearExpectations(callbacks.get());
@@ -733,7 +735,7 @@ TEST_F(CsisClientTest, test_get_group_id) {
   TestConnect(test_address);
   EXPECT_CALL(*callbacks,
               OnConnectionState(test_address, ConnectionState::CONNECTED));
-  EXPECT_CALL(*callbacks, OnDeviceAvailable(test_address, _, _, _));
+  EXPECT_CALL(*callbacks, OnDeviceAvailable(test_address, _, _, _, _));
   InjectConnectedEvent(test_address, 1);
   GetSearchCompleteEvent(1);
   int group_id = CsisClient::Get()->GetGroupId(test_address);
@@ -758,13 +760,7 @@ TEST_F(CsisClientTest, test_add_device_to_group) {
   ASSERT_FALSE(g_1->IsEmpty());
 }
 
-TEST_F(CsisClientTest, test_set_desired_size) {
-  auto g_1 = std::make_shared<CsisGroup>(666, bluetooth::Uuid::kEmpty);
-  g_1->SetDesiredSize(10);
-  ASSERT_EQ((int)sizeof(g_1), 16);
-}
-
-TEST_F(CsisClientTest, test_get_desired_size) {
+TEST_F(CsisClientTest, test_get_set_desired_size) {
   auto g_1 = std::make_shared<CsisGroup>(666, bluetooth::Uuid::kEmpty);
   g_1->SetDesiredSize(10);
   ASSERT_EQ(g_1->GetDesiredSize(), 10);
@@ -1028,7 +1024,7 @@ TEST_F(CsisMultiClientTest, test_discover_multiple_instances) {
   EXPECT_CALL(*callbacks,
               OnConnectionState(test_address, ConnectionState::CONNECTED))
       .Times(1);
-  EXPECT_CALL(*callbacks, OnDeviceAvailable(test_address, _, _, _)).Times(2);
+  EXPECT_CALL(*callbacks, OnDeviceAvailable(test_address, _, _, _, _)).Times(2);
   InjectConnectedEvent(test_address, 1);
   GetSearchCompleteEvent(1);
   Mock::VerifyAndClearExpectations(callbacks.get());

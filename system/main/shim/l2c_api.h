@@ -22,6 +22,7 @@
 
 #include "stack/include/bt_hdr.h"
 #include "stack/include/l2c_api.h"
+#include "types/ble_address_with_type.h"
 #include "types/hci_role.h"
 #include "types/raw_address.h"
 
@@ -427,6 +428,8 @@ bool L2CA_EnableUpdateBleConnParams(const RawAddress& rem_bda, bool enable);
  ******************************************************************************/
 bool L2CA_SetLeGattTimeout(const RawAddress& rem_bda, uint16_t idle_tout);
 
+bool L2CA_MarkLeLinkAsActive(const RawAddress& rem_bda);
+
 bool L2CA_UpdateBleConnParams(const RawAddress& rem_bda, uint16_t min_int,
                               uint16_t max_int, uint16_t latency,
                               uint16_t timeout, uint16_t min_ce_len,
@@ -484,10 +487,12 @@ uint16_t L2CA_GetNumLinks();
 bool L2CA_IsLeLink(uint16_t acl_handle);
 
 void L2CA_ReadConnectionAddr(const RawAddress& pseudo_addr,
-                             RawAddress& conn_addr, uint8_t* p_addr_type);
+                             RawAddress& conn_addr,
+                             tBLE_ADDR_TYPE* p_addr_type);
 
 bool L2CA_ReadRemoteConnectionAddr(const RawAddress& pseudo_addr,
-                                   RawAddress& conn_addr, uint8_t* p_addr_type);
+                                   RawAddress& conn_addr,
+                                   tBLE_ADDR_TYPE* p_addr_type);
 
 }  // namespace shim
 }  // namespace bluetooth

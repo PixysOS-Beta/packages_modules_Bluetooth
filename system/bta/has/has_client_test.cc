@@ -104,6 +104,9 @@ static uint16_t GetTestConnId(const RawAddress& address) {
 class MockHasCallbacks : public HasClientCallbacks {
  public:
   MockHasCallbacks() = default;
+  MockHasCallbacks(const MockHasCallbacks&) = delete;
+  MockHasCallbacks& operator=(const MockHasCallbacks&) = delete;
+
   ~MockHasCallbacks() override = default;
 
   MOCK_METHOD((void), OnConnectionState,
@@ -133,9 +136,6 @@ class MockHasCallbacks : public HasClientCallbacks {
               ((std::variant<RawAddress, int> addr_or_group_id),
                uint8_t preset_index, ErrorCode error_code),
               (override));
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(MockHasCallbacks);
 };
 
 class HasClientTestBase : public ::testing::Test {
@@ -319,7 +319,7 @@ class HasClientTestBase : public ::testing::Test {
                                               void* cb_data) {
           auto pp = value.data();
           auto len = value.size();
-          uint8_t op, index;
+          uint8_t op, index, num_of_indices;
 
           const bool indicate = false;
 
@@ -344,25 +344,21 @@ class HasClientTestBase : public ::testing::Test {
           }
 
           switch (static_cast<::le_audio::has::PresetCtpOpcode>(op)) {
-            case ::le_audio::has::PresetCtpOpcode::READ_ALL_PRESETS:
-              ASSERT_EQ(0u, len);
-              InjectNotifyReadPresetsResponse(conn_id, address, handle, value,
-                                              indicate, -1, cb, cb_data);
-              break;
-
-            case ::le_audio::has::PresetCtpOpcode::READ_PRESET_BY_INDEX:
-              if (len < 1) {
+            case ::le_audio::has::PresetCtpOpcode::READ_PRESETS:
+              if (len < 2) {
                 if (cb)
                   cb(conn_id, GATT_INVALID_ATTR_LEN, handle, value.size(),
                      value.data(), cb_data);
 
               } else {
                 STREAM_TO_UINT8(index, pp);
-                --len;
+                STREAM_TO_UINT8(num_of_indices, pp);
+                len -= 2;
                 ASSERT_EQ(0u, len);
 
                 InjectNotifyReadPresetsResponse(conn_id, address, handle, value,
-                                                indicate, index, cb, cb_data);
+                                                indicate, index, num_of_indices,
+                                                cb, cb_data);
               }
               break;
 
@@ -741,8 +737,8 @@ class HasClientTestBase : public ::testing::Test {
     ON_CALL(gatt_interface, Open(_, _, _, _))
         .WillByDefault(
             Invoke([&](tGATT_IF client_if, const RawAddress& remote_bda,
-                       bool is_direct, bool opportunistic) {
-              if (is_direct)
+                       tBTM_BLE_CONN_TYPE connection_type, bool opportunistic) {
+              if (connection_type == BTM_BLE_DIRECT_CONNECTION)
                 InjectConnectedEvent(remote_bda, GetTestConnId(remote_bda));
             }));
 
@@ -788,7 +784,8 @@ class HasClientTestBase : public ::testing::Test {
     ON_CALL(btm_interface, BTM_IsEncrypted(address, _))
         .WillByDefault(DoAll(Return(encryption_result)));
 
-    EXPECT_CALL(gatt_interface, Open(gatt_if, address, true, _));
+    EXPECT_CALL(gatt_interface,
+                Open(gatt_if, address, BTM_BLE_DIRECT_CONNECTION, _));
     HasClient::Get()->Connect(address);
 
     Mock::VerifyAndClearExpectations(&*callbacks);
@@ -811,7 +808,8 @@ class HasClientTestBase : public ::testing::Test {
   void TestAddFromStorage(const RawAddress& address, uint8_t features,
                           bool auto_connect) {
     if (auto_connect) {
-      EXPECT_CALL(gatt_interface, Open(gatt_if, address, false, _));
+      EXPECT_CALL(gatt_interface,
+                  Open(gatt_if, address, BTM_BLE_BKG_CONNECT_ALLOW_LIST, _));
       HasClient::Get()->AddFromStorage(address, features, auto_connect);
 
       /* Inject connected event for autoconnect/background connection */
@@ -949,38 +947,43 @@ class HasClientTestBase : public ::testing::Test {
                             value, indicate);
   }
 
-  void InjectNotifyReadPresetsResponse(uint16_t conn_id,
-                                       RawAddress const& address,
-                                       uint16_t handle,
-                                       std::vector<uint8_t> value,
-                                       bool indicate, int index,
-                                       GATT_WRITE_OP_CB cb, void* cb_data) {
+  void InjectNotifyReadPresetsResponse(
+      uint16_t conn_id, RawAddress const& address, uint16_t handle,
+      std::vector<uint8_t> value, bool indicate, int index, int num_of_indices,
+      GATT_WRITE_OP_CB cb, void* cb_data) {
     auto presets = current_peer_presets_.at(conn_id);
     LOG_ASSERT(!presets.empty()) << __func__ << " Mocking error!";
 
-    if (index == -1) {
+    /* Index is a start index, not necessary is a valid index for the
+     * peer device */
+    auto preset = presets.find(index);
+    while (preset == presets.end() &&
+           index++ <= ::le_audio::has::kMaxNumOfPresets) {
+      preset = presets.find(index);
+    }
+
+    if (preset == presets.end()) {
+      /* operation not possible */
       if (cb)
-        cb(conn_id, GATT_SUCCESS, handle, value.size(), value.data(), cb_data);
-      /* Notify all presets */
-      for (auto preset = presets.begin(); preset != presets.end(); preset++) {
-        InjectNotifyReadPresetResponse(conn_id, address, handle, *preset,
-                                       indicate,
-                                       (preset == std::prev(presets.end())));
-      }
-    } else {
-      auto preset = presets.find(index);
-      if (preset != presets.end()) {
-        if (cb)
-          cb(conn_id, GATT_SUCCESS, handle, value.size(), value.data(),
-             cb_data);
-        InjectNotifyReadPresetResponse(conn_id, address, handle, *preset,
-                                       indicate, true);
-      } else {
-        /* operation not possible */
-        if (cb)
-          cb(conn_id, (tGATT_STATUS)0x83, handle, value.size(), value.data(),
-             cb_data);
-      }
+        cb(conn_id, (tGATT_STATUS)0x83, handle, value.size(), value.data(),
+           cb_data);
+
+      return;
+    }
+
+    if (cb)
+      cb(conn_id, GATT_SUCCESS, handle, value.size(), value.data(), cb_data);
+    /* Notify presets */
+    int num_of_notif = 1;
+    while (1) {
+      bool last =
+          preset == std::prev(presets.end()) || num_of_notif == num_of_indices;
+      InjectNotifyReadPresetResponse(conn_id, address, handle, *preset,
+                                     indicate, (last));
+      if (last) return;
+
+      num_of_notif++;
+      preset++;
     }
   }
 
@@ -1232,7 +1235,8 @@ TEST_F(HasClientTest, test_disconnect_non_connected) {
   const RawAddress test_address = GetTestAddress(1);
 
   /* Override the default action to prevent us sendind the connected event */
-  EXPECT_CALL(gatt_interface, Open(gatt_if, test_address, true, _))
+  EXPECT_CALL(gatt_interface,
+              Open(gatt_if, test_address, BTM_BLE_DIRECT_CONNECTION, _))
       .WillOnce(Return());
   HasClient::Get()->Connect(test_address);
   TestDisconnect(test_address, GATT_INVALID_CONN_ID);
@@ -1340,7 +1344,7 @@ TEST_F(HasClientTest, test_reconnect_after_encryption_failed_from_storage) {
   InjectConnectedEvent(test_address, GetTestConnId(test_address));
 }
 
-TEST_F(HasClientTest, test_load_from_storage) {
+TEST_F(HasClientTest, test_load_from_storage_and_connect) {
   const RawAddress test_address = GetTestAddress(1);
   SetSampleDatabaseHasPresetsNtf(test_address, kFeatureBitDynamicPresets, {{}});
   SetEncryptionResult(test_address, true);
@@ -1391,7 +1395,7 @@ TEST_F(HasClientTest, test_load_from_storage) {
 
   /* Expect no read or write operations when loading from storage */
   EXPECT_CALL(gatt_queue, ReadCharacteristic(1, _, _, _)).Times(0);
-  EXPECT_CALL(gatt_queue, WriteDescriptor(1, _, _, _, _, _)).Times(0);
+  EXPECT_CALL(gatt_queue, WriteDescriptor(1, _, _, _, _, _)).Times(3);
 
   TestAddFromStorage(test_address,
                      kFeatureBitWritablePresets |
@@ -1408,6 +1412,58 @@ TEST_F(HasClientTest, test_load_from_storage) {
       ASSERT_TRUE(info.writable);
     ASSERT_EQ(preset->GetName(), info.preset_name);
   }
+}
+
+TEST_F(HasClientTest, test_load_from_storage) {
+  const RawAddress test_address = GetTestAddress(1);
+  SetSampleDatabaseHasPresetsNtf(test_address, kFeatureBitDynamicPresets, {{}});
+  SetEncryptionResult(test_address, true);
+
+  std::set<HasPreset, HasPreset::ComparatorDesc> has_presets = {{
+      HasPreset(5, HasPreset::kPropertyAvailable | HasPreset::kPropertyWritable,
+                "YourWritablePreset5"),
+      HasPreset(55, HasPreset::kPropertyAvailable, "YourPreset55"),
+  }};
+
+  /* Load persistent storage data */
+  ON_CALL(btif_storage_interface_, GetLeaudioHasPresets(test_address, _, _))
+      .WillByDefault([&has_presets](const RawAddress& address,
+                                    std::vector<uint8_t>& presets_bin,
+                                    uint8_t& active_preset) {
+        /* Generate presets binary to be used instead the attribute values */
+        HasDevice device(address, 0);
+        device.has_presets = has_presets;
+        active_preset = 55;
+
+        if (device.SerializePresets(presets_bin)) return true;
+
+        return false;
+      });
+
+  EXPECT_CALL(gatt_interface, RegisterForNotifications(gatt_if, _, _))
+      .Times(0);  // features
+
+  EXPECT_CALL(*callbacks,
+              OnDeviceAvailable(test_address,
+                                (kFeatureBitWritablePresets |
+                                 kFeatureBitPresetSynchronizationSupported |
+                                 kFeatureBitHearingAidTypeBanded)));
+
+  std::vector<PresetInfo> loaded_preset_details;
+  EXPECT_CALL(*callbacks,
+              OnPresetInfo(std::variant<RawAddress, int>(test_address),
+                           PresetInfoReason::ALL_PRESET_INFO, _))
+      .Times(0);
+
+  /* Expect no read or write operations when loading from storage */
+  EXPECT_CALL(gatt_queue, ReadCharacteristic(1, _, _, _)).Times(0);
+  EXPECT_CALL(gatt_queue, WriteDescriptor(1, _, _, _, _, _)).Times(0);
+
+  TestAddFromStorage(test_address,
+                     kFeatureBitWritablePresets |
+                         kFeatureBitPresetSynchronizationSupported |
+                         kFeatureBitHearingAidTypeBanded,
+                     false);
 }
 
 TEST_F(HasClientTest, test_write_to_storage) {
@@ -3023,8 +3079,7 @@ TEST_F(HasTypesTest, test_group_op_coordinator_init) {
   EXPECT_CALL(*AlarmMock::Get(), AlarmNew(_)).Times(1);
   HasCtpGroupOpCoordinator wrapper(
       {address1, address2},
-      HasCtpOp(0x01, ::le_audio::has::PresetCtpOpcode::READ_PRESET_BY_INDEX,
-               6));
+      HasCtpOp(0x01, ::le_audio::has::PresetCtpOpcode::READ_PRESETS, 6));
   ASSERT_EQ(2u, wrapper.ref_cnt);
 
   EXPECT_CALL(*AlarmMock::Get(), AlarmFree(_)).Times(1);
@@ -3043,12 +3098,10 @@ TEST_F(HasTypesTest, test_group_op_coordinator_copy) {
   EXPECT_CALL(*AlarmMock::Get(), AlarmNew(_)).Times(1);
   HasCtpGroupOpCoordinator wrapper(
       {address1, address2},
-      HasCtpOp(0x01, ::le_audio::has::PresetCtpOpcode::READ_PRESET_BY_INDEX,
-               6));
+      HasCtpOp(0x01, ::le_audio::has::PresetCtpOpcode::READ_PRESETS, 6));
   HasCtpGroupOpCoordinator wrapper2(
       {address1},
-      HasCtpOp(0x01, ::le_audio::has::PresetCtpOpcode::READ_PRESET_BY_INDEX,
-               6));
+      HasCtpOp(0x01, ::le_audio::has::PresetCtpOpcode::READ_PRESETS, 6));
   ASSERT_EQ(3u, wrapper.ref_cnt);
   HasCtpGroupOpCoordinator wrapper3 = wrapper2;
   auto* wrapper4 =
@@ -3076,12 +3129,10 @@ TEST_F(HasTypesTest, test_group_op_coordinator_completion) {
   EXPECT_CALL(*AlarmMock::Get(), AlarmNew(_)).Times(1);
   HasCtpGroupOpCoordinator wrapper(
       {address1, address3},
-      HasCtpOp(0x01, ::le_audio::has::PresetCtpOpcode::READ_PRESET_BY_INDEX,
-               6));
+      HasCtpOp(0x01, ::le_audio::has::PresetCtpOpcode::READ_PRESETS, 6));
   HasCtpGroupOpCoordinator wrapper2(
       {address2},
-      HasCtpOp(0x01, ::le_audio::has::PresetCtpOpcode::READ_PRESET_BY_INDEX,
-               6));
+      HasCtpOp(0x01, ::le_audio::has::PresetCtpOpcode::READ_PRESETS, 6));
   ASSERT_EQ(3u, wrapper.ref_cnt);
 
   EXPECT_CALL(*AlarmMock::Get(), AlarmFree(_)).Times(0);

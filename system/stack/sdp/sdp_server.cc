@@ -23,19 +23,20 @@
  *
  ******************************************************************************/
 
+#include <base/logging.h>
 #include <log/log.h>
 #include <string.h>  // memcpy
 
 #include <cstdint>
 
+#include "btif/include/btif_config.h"
 #include "device/include/interop.h"
 #include "osi/include/allocator.h"
+#include "stack/include/avrc_api.h"
 #include "stack/include/avrc_defs.h"
 #include "stack/include/bt_hdr.h"
 #include "stack/include/sdp_api.h"
 #include "stack/sdp/sdpint.h"
-
-#include <base/logging.h>
 
 /* Maximum number of bytes to reserve out of SDP MTU for response data */
 #define SDP_MAX_SERVICE_RSPHDR_LEN 12
@@ -117,8 +118,6 @@ void sdp_server_handle_client_req(tCONN_CB* p_ccb, BT_HDR* p_msg) {
                      sdp_conn_timer_timeout, p_ccb);
 
   if (p_req + sizeof(pdu_id) + sizeof(trans_num) > p_req_end) {
-    android_errorWriteLog(0x534e4554, "69384124");
-    android_errorWriteLog(0x534e4554, "169342531");
     trans_num = 0;
     sdpu_build_n_send_error(p_ccb, trans_num, SDP_INVALID_REQ_SYNTAX,
                             SDP_TEXT_BAD_HEADER);
@@ -132,8 +131,6 @@ void sdp_server_handle_client_req(tCONN_CB* p_ccb, BT_HDR* p_msg) {
   BE_STREAM_TO_UINT16(trans_num, p_req);
 
   if (p_req + sizeof(param_len) > p_req_end) {
-    android_errorWriteLog(0x534e4554, "69384124");
-    android_errorWriteLog(0x534e4554, "169342531");
     sdpu_build_n_send_error(p_ccb, trans_num, SDP_INVALID_REQ_SYNTAX,
                             SDP_TEXT_BAD_HEADER);
     return;
@@ -201,7 +198,6 @@ static void process_service_search(tCONN_CB* p_ccb, uint16_t trans_num,
 
   /* Get the max replies we can send. Cap it at our max anyways. */
   if (p_req + sizeof(max_replies) + sizeof(uint8_t) > p_req_end) {
-    android_errorWriteLog(0x534e4554, "69384124");
     sdpu_build_n_send_error(p_ccb, trans_num, SDP_INVALID_REQ_SYNTAX,
                             SDP_TEXT_BAD_MAX_RECORDS_LIST);
     return;
@@ -221,6 +217,11 @@ static void process_service_search(tCONN_CB* p_ccb, uint16_t trans_num,
   }
 
   /* Check if this is a continuation request */
+  if (p_req + 1 > p_req_end) {
+    sdpu_build_n_send_error(p_ccb, trans_num, SDP_INVALID_CONT_STATE,
+                            SDP_TEXT_BAD_CONT_LEN);
+    return;
+  }
   if (*p_req) {
     if (*p_req++ != SDP_CONTINUATION_LEN ||
         (p_req + sizeof(cont_offset) > p_req_end)) {
@@ -323,7 +324,6 @@ static void process_service_attr_req(tCONN_CB* p_ccb, uint16_t trans_num,
   uint16_t attr_len;
 
   if (p_req + sizeof(rec_handle) + sizeof(max_list_len) > p_req_end) {
-    android_errorWriteLog(0x534e4554, "69384124");
     sdpu_build_n_send_error(p_ccb, trans_num, SDP_INVALID_SERV_REC_HDL,
                             SDP_TEXT_BAD_HANDLE);
     return;
@@ -361,7 +361,6 @@ static void process_service_attr_req(tCONN_CB* p_ccb, uint16_t trans_num,
 
   if (max_list_len < 4) {
     sdpu_build_n_send_error(p_ccb, trans_num, SDP_ILLEGAL_PARAMETER, NULL);
-    android_errorWriteLog(0x534e4554, "68776054");
     return;
   }
 
@@ -370,6 +369,11 @@ static void process_service_attr_req(tCONN_CB* p_ccb, uint16_t trans_num,
   p_ccb->rsp_list = (uint8_t*)osi_malloc(max_list_len);
 
   /* Check if this is a continuation request */
+  if (p_req + 1 > p_req_end) {
+    sdpu_build_n_send_error(p_ccb, trans_num, SDP_INVALID_CONT_STATE,
+                            SDP_TEXT_BAD_CONT_LEN);
+    return;
+  }
   if (*p_req) {
     if (*p_req++ != SDP_CONTINUATION_LEN ||
         (p_req + sizeof(cont_offset) > p_req_end)) {
@@ -400,12 +404,22 @@ static void process_service_attr_req(tCONN_CB* p_ccb, uint16_t trans_num,
     p_ccb->cont_info.attr_offset = 0;
   }
 
+  bool is_service_avrc_target = false;
+  const tSDP_ATTRIBUTE* p_attr_service_id;
+  p_attr_service_id = sdp_db_find_attr_in_rec(
+      p_rec, ATTR_ID_SERVICE_CLASS_ID_LIST, ATTR_ID_SERVICE_CLASS_ID_LIST);
+  if (p_attr_service_id) {
+    is_service_avrc_target = sdpu_is_service_id_avrc_target(p_attr_service_id);
+  }
   /* Search for attributes that match the list given to us */
   for (xx = p_ccb->cont_info.next_attr_index; xx < attr_seq.num_attr; xx++) {
     p_attr = sdp_db_find_attr_in_rec(p_rec, attr_seq.attr_entry[xx].start,
                                      attr_seq.attr_entry[xx].end);
 
     if (p_attr) {
+      if (is_service_avrc_target) {
+        sdpu_set_avrc_target_version(p_attr, &(p_ccb->device_address));
+      }
       /* Check if attribute fits. Assume 3-byte value type/length */
       rem_len = max_list_len - (int16_t)(p_rsp - &p_ccb->rsp_list[0]);
 
@@ -420,7 +434,6 @@ static void process_service_attr_req(tCONN_CB* p_ccb, uint16_t trans_num,
       /* if there is a partial attribute pending to be sent */
       if (p_ccb->cont_info.attr_offset) {
         if (attr_len < p_ccb->cont_info.attr_offset) {
-          android_errorWriteLog(0x534e4554, "79217770");
           LOG(ERROR) << "offset is bigger than attribute length";
           sdpu_build_n_send_error(p_ccb, trans_num, SDP_INVALID_CONT_STATE,
                                   SDP_TEXT_BAD_CONT_LEN);
@@ -554,7 +567,6 @@ static void process_service_search_attr_req(tCONN_CB* p_ccb, uint16_t trans_num,
   const tSDP_RECORD* p_rec;
   tSDP_ATTR_SEQ attr_seq, attr_seq_sav;
   const tSDP_ATTRIBUTE* p_attr;
-  tSDP_ATTRIBUTE attr_sav;
   bool maxxed_out = false, is_cont = false;
   uint8_t* p_seq_start;
   uint16_t seq_len, attr_len;
@@ -589,7 +601,6 @@ static void process_service_search_attr_req(tCONN_CB* p_ccb, uint16_t trans_num,
 
   if (max_list_len < 4) {
     sdpu_build_n_send_error(p_ccb, trans_num, SDP_ILLEGAL_PARAMETER, NULL);
-    android_errorWriteLog(0x534e4554, "68817966");
     return;
   }
 
@@ -598,6 +609,11 @@ static void process_service_search_attr_req(tCONN_CB* p_ccb, uint16_t trans_num,
   p_ccb->rsp_list = (uint8_t*)osi_malloc(max_list_len);
 
   /* Check if this is a continuation request */
+  if (p_req + 1 > p_req_end) {
+    sdpu_build_n_send_error(p_ccb, trans_num, SDP_INVALID_CONT_STATE,
+                            SDP_TEXT_BAD_CONT_LEN);
+    return;
+  }
   if (*p_req) {
     if (*p_req++ != SDP_CONTINUATION_LEN ||
         (p_req + sizeof(uint16_t) > p_req_end)) {
@@ -647,24 +663,22 @@ static void process_service_search_attr_req(tCONN_CB* p_ccb, uint16_t trans_num,
       p_rsp += 3;
     }
 
+    bool is_service_avrc_target = false;
+    const tSDP_ATTRIBUTE* p_attr_service_id;
+    p_attr_service_id = sdp_db_find_attr_in_rec(
+        p_rec, ATTR_ID_SERVICE_CLASS_ID_LIST, ATTR_ID_SERVICE_CLASS_ID_LIST);
+    if (p_attr_service_id) {
+      is_service_avrc_target =
+          sdpu_is_service_id_avrc_target(p_attr_service_id);
+    }
     /* Get a list of handles that match the UUIDs given to us */
     for (xx = p_ccb->cont_info.next_attr_index; xx < attr_seq.num_attr; xx++) {
       p_attr = sdp_db_find_attr_in_rec(p_rec, attr_seq.attr_entry[xx].start,
                                        attr_seq.attr_entry[xx].end);
 
       if (p_attr) {
-        // Check if the attribute contain AVRCP profile description list
-        uint16_t avrcp_version = sdpu_is_avrcp_profile_description_list(p_attr);
-        if (avrcp_version > AVRC_REV_1_4 &&
-            interop_match_addr(INTEROP_AVRCP_1_4_ONLY,
-                               &(p_ccb->device_address))) {
-          SDP_TRACE_DEBUG(
-              "%s, device=%s is only accept AVRCP 1.4, reply AVRCP 1.4 "
-              "instead.",
-              __func__, p_ccb->device_address.ToString().c_str());
-          memcpy(&attr_sav, p_attr, sizeof(tSDP_ATTRIBUTE));
-          attr_sav.value_ptr[attr_sav.len - 1] = 0x04;
-          p_attr = &attr_sav;
+        if (is_service_avrc_target) {
+          sdpu_set_avrc_target_version(p_attr, &(p_ccb->device_address));
         }
         /* Check if attribute fits. Assume 3-byte value type/length */
         rem_len = max_list_len - (int16_t)(p_rsp - &p_ccb->rsp_list[0]);
@@ -681,7 +695,6 @@ static void process_service_search_attr_req(tCONN_CB* p_ccb, uint16_t trans_num,
         /* if there is a partial attribute pending to be sent */
         if (p_ccb->cont_info.attr_offset) {
           if (attr_len < p_ccb->cont_info.attr_offset) {
-            android_errorWriteLog(0x534e4554, "79217770");
             LOG(ERROR) << "offset is bigger than attribute length";
             sdpu_build_n_send_error(p_ccb, trans_num, SDP_INVALID_CONT_STATE,
                                     SDP_TEXT_BAD_CONT_LEN);

@@ -44,7 +44,7 @@ void cleanup();
 bool setup_codec();
 
 // Set low latency buffer mode allowed or disallowed
-bool set_audio_low_latency_mode_allowed(bool allowed);
+void set_audio_low_latency_mode_allowed(bool allowed);
 
 // Send command to the BluetoothAudio HAL: StartSession, EndSession,
 // StreamStarted, StreamSuspended
@@ -58,6 +58,9 @@ size_t read(uint8_t* p_buf, uint32_t len);
 
 // Update A2DP delay report to BluetoothAudio HAL
 void set_remote_delay(uint16_t delay_report);
+
+// Check whether OPUS is supported
+bool is_opus_supported();
 
 }  // namespace a2dp
 }  // namespace audio
